@@ -1,0 +1,120 @@
+Please extract structured scientific data from the following paper text.
+
+Return a single JSON object that exactly matches this schema:
+
+```json
+{
+  "schema_version": "1.0.0",
+  "summary": "<concise 3-5 sentence human-readable summary of what this paper does, what materials/conditions are studied, and what the key results are>",
+
+  "bibliographic_info": {
+    "title": "<paper title or null>",
+    "journal": "<journal name or null>",
+    "authors": ["<author names>"],
+    "year": <year as integer or null>,
+    "doi": "<DOI string or null>",
+    "volume": "<volume or null>",
+    "issue": "<issue or null>",
+    "pages": "<page range or null>",
+    "keywords": ["<keyword>"],
+    "abstract": "<abstract text or null>",
+    "evidence": {"source_text": "...", "page_numbers": [1], "section": "Header", "confidence": 0.9, "is_inferred": false}
+  },
+
+  "journal_quality": {
+    "impact_factor": null,
+    "impact_factor_year": null,
+    "impact_factor_source": null,
+    "impact_factor_status": "unresolved",
+    "notes": null
+  },
+
+  "materials": [
+    {
+      "name": "<material name>",
+      "composition": "<chemical formula or description>",
+      "stoichiometry": "<stoichiometric ratios or null>",
+      "dopants": ["<dopant>"],
+      "substrate": "<substrate material or null>",
+      "layer_stack": "<full layer stack description or null>",
+      "device_structure": "<device architecture or null>",
+      "crystal_structure": "<crystal structure or null>",
+      "phase": "<phase or null>",
+      "dimensionality": "<2D/3D/thin film/bulk or null>",
+      "morphology": "<nanoparticle/thin film/crystal/etc. or null>",
+      "additional_properties": {},
+      "evidence": {"source_text": "...", "page_numbers": [], "section": "...", "confidence": 0.9, "is_inferred": false}
+    }
+  ],
+
+  "process_conditions": [
+    {
+      "parameter_name": "<name of process parameter>",
+      "value_numeric": <number or null>,
+      "value_text": "<text value if not purely numeric, or null>",
+      "unit": "<unit string or null>",
+      "variable_role": "input",
+      "confidence": 0.9,
+      "is_inferred": false,
+      "notes": null,
+      "evidence": {"source_text": "...", "page_numbers": [], "section": "...", "confidence": 0.9, "is_inferred": false}
+    }
+  ],
+
+  "measurement_methods": [
+    {
+      "technique_name": "<technique name>",
+      "category": "<structural|electrical|magnetic|optical|thermal|other>",
+      "description": "<brief description or null>"
+    }
+  ],
+
+  "result_properties": [
+    {
+      "property_name": "<property name, e.g. coercivity, conductivity, TMR ratio>",
+      "value_numeric": <number or null>,
+      "value_min": <lower bound or null>,
+      "value_max": <upper bound or null>,
+      "value_text": "<text description if not purely numeric>",
+      "unit": "<unit string or null>",
+      "conditions": "<measurement conditions, e.g. 'at 300 K, out-of-plane field'>",
+      "variable_role": "output",
+      "confidence": 0.9,
+      "is_inferred": false,
+      "needs_review": false,
+      "evidence": {"source_text": "...", "page_numbers": [], "section": "...", "confidence": 0.9, "is_inferred": false}
+    }
+  ],
+
+  "outcome": {
+    "main_findings": "<authors' key findings, close to original wording>",
+    "claimed_mechanism": "<mechanistic explanation offered by the authors or null>",
+    "limitations": "<stated limitations or null>",
+    "notable_novelty": "<what makes this paper novel according to the authors or null>",
+    "relevant_for_optimization": <true if results include quantitative process-to-property relationships, else false>,
+    "evidence": {"source_text": "...", "page_numbers": [], "section": "...", "confidence": 0.9, "is_inferred": false}
+  },
+
+  "input_variables": {
+    "<process_param_name>": {"value": <value>, "unit": "<unit>", "role": "input"}
+  },
+
+  "output_variables": {
+    "<property_name>": {"value": <value>, "unit": "<unit>", "role": "output"}
+  },
+
+  "contextual_notes": {
+    "<contextual_key>": {"value": "<value>", "role": "contextual"}
+  },
+
+  "extraction_warnings": ["<any warning about extraction quality>"],
+  "fields_needing_review": ["<field names that are uncertain or conflicting>"]
+}
+```
+
+## Paper text to extract from:
+
+{paper_text}
+
+---
+Remember: Return ONLY valid JSON. No markdown code blocks, no preamble, no explanation.
