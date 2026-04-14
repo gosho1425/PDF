@@ -4,6 +4,10 @@
  * SECURITY NOTE: This file only communicates with OUR backend.
  * The backend is responsible for all LLM API calls.
  * No API keys are ever included here.
+ *
+ * Ingestion model: folder-scan only.
+ *   - POST /papers/scan           triggers an async folder scan
+ *   - GET  /papers/ingest-status  returns mount health + pdf count
  */
 
 import axios from 'axios';
@@ -11,7 +15,8 @@ import type {
   PaperListResponse,
   PaperDetail,
   ExtractionRecord,
-  UploadResult,
+  ScanResult,
+  IngestStatus,
   ExportRequest,
 } from '@/types';
 
@@ -39,6 +44,22 @@ apiClient.interceptors.response.use(
   }
 );
 
+// ── Ingestion API ──────────────────────────────────────────────────────────────
+
+export const ingestApi = {
+  /** GET /papers/ingest-status — folder mount health */
+  getStatus: async (): Promise<IngestStatus> => {
+    const response = await apiClient.get('/papers/ingest-status');
+    return response.data;
+  },
+
+  /** POST /papers/scan — trigger async folder scan */
+  triggerScan: async (): Promise<ScanResult> => {
+    const response = await apiClient.post('/papers/scan');
+    return response.data;
+  },
+};
+
 // ── Papers API ─────────────────────────────────────────────────────────────────
 
 export const papersApi = {
@@ -56,23 +77,6 @@ export const papersApi = {
 
   get: async (paperId: string): Promise<PaperDetail> => {
     const response = await apiClient.get(`/papers/${paperId}`);
-    return response.data;
-  },
-
-  upload: async (files: File[]): Promise<UploadResult[]> => {
-    const formData = new FormData();
-    files.forEach((file) => formData.append('files', file));
-    const response = await apiClient.post('/papers/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 60000,
-    });
-    return response.data;
-  },
-
-  scanFolder: async (folderPath: string): Promise<{ task_id: string; status: string }> => {
-    const response = await apiClient.post('/papers/scan-folder', null, {
-      params: { folder_path: folderPath },
-    });
     return response.data;
   },
 

@@ -5,16 +5,15 @@ import { usePathname } from 'next/navigation';
 import {
   FlaskConical,
   LayoutDashboard,
-  Upload,
+  FolderInput,
   Table,
-  Settings,
   BookOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/upload', label: 'Upload', icon: Upload },
+  { href: '/ingest', label: 'Ingest', icon: FolderInput },
   { href: '/papers', label: 'Papers', icon: BookOpen },
   { href: '/table', label: 'Data Table', icon: Table },
 ];

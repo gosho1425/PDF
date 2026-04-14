@@ -90,7 +90,11 @@ export function DataTablePage() {
         <div className="card p-12 text-center text-gray-400">
           <Table2 className="w-10 h-10 mx-auto mb-3 text-gray-200" />
           <p className="text-sm">No extracted papers yet.</p>
-          <p className="text-xs mt-1">Upload and process papers to see them here.</p>
+          <p className="text-xs mt-1">
+            Ingest PDFs from the{' '}
+            <a href="/ingest" className="text-brand-500 hover:underline">Ingest page</a>{' '}
+            to see them here.
+          </p>
         </div>
       ) : (
         <div className="card overflow-x-auto">
