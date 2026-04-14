@@ -1,0 +1,34 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Frontend .dockerignore
+# Prevents large/unnecessary files from being sent to the Docker build context.
+# Smaller context = faster builds.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Dependencies (Docker installs fresh via npm ci)
+node_modules/
+
+# Next.js build output (rebuilt inside Docker)
+.next/
+out/
+
+# Development-only files
+*.local
+.env
+.env.*
+!.env.example
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Test output
+coverage/
+.nyc_output/
