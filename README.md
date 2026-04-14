@@ -45,6 +45,8 @@ Save the file.
 docker compose up -d
 ```
 
+> **First run note:** Docker will download images and build the frontend (~5–10 min). On subsequent starts it only takes a few seconds.
+
 **Step 6 — Open your browser**
 - App: http://localhost:3000
 - API docs: http://localhost:8000/api/docs
@@ -53,6 +55,8 @@ docker compose up -d
 ```cmd
 docker compose down
 ```
+
+> **No separate Node.js install needed.** The `package-lock.json` file is already committed in this repo, so Docker can install all frontend dependencies exactly and reproducibly without you needing Node.js on your machine.
 
 ---
 
@@ -308,7 +312,14 @@ docker compose up -d
 docker compose up -d
 ```
 
-The first time you run this, Docker will download all the required images (this can take 5–10 minutes depending on your connection). Subsequent starts are much faster.
+The first time you run this, Docker will:
+1. Download base images (Postgres, Redis, Node.js) from Docker Hub
+2. Build the frontend — `npm ci` installs packages from the committed `package-lock.json`, then `next build` compiles the app
+3. Build the backend Python image
+
+This takes **5–10 minutes** on the first run. Subsequent starts reuse the cached layers and complete in seconds.
+
+> **You do not need Node.js installed on your machine.** The `package-lock.json` file is committed in this repository, so Docker can install all frontend dependencies precisely and reproducibly inside the container.
 
 You should see output like:
 ```
@@ -376,9 +387,16 @@ docker compose down -v
 → WSL 2 may not be enabled. Open Docker Desktop → Settings → General → ensure "Use the WSL 2 based engine" is checked. Or run `wsl --install` in an administrator PowerShell.
 
 **A container exits immediately**
-Run `docker compose logs api` (or `worker`, `db`, etc.) to see the error message.
+Run `docker compose logs api` (or `worker`, `db`, `frontend`, etc.) to see the error message.
 
 The most common cause is a missing or incorrect `.env` value — especially `POSTGRES_PASSWORD` being empty.
+
+**Frontend build fails with "npm ci can only install with an existing package-lock.json"**
+This means `package-lock.json` is missing. This file is committed in the repository, so it should always be present after `git clone`. If you deleted it or downloaded the ZIP without it, re-clone the repo:
+```
+git clone https://github.com/gosho1425/PDF.git
+```
+If you see this error after pulling an update, the lockfile may have been regenerated. Run `docker compose build --no-cache frontend` to force a clean rebuild.
 
 **Port already in use**
 If port 3000 or 8000 is already used by another app, edit `.env` and change `FRONTEND_PORT` or `API_PORT` to a different number, then restart.

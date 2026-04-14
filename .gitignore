@@ -34,6 +34,10 @@ yarn-error.log*
 .pnp
 .pnp.js
 .DS_Store
+# Next.js generates these — do not commit
+next-env.d.ts
+tsconfig.tsbuildinfo
+*.tsbuildinfo
 
 # ─── Data / Generated ─────────────────────────────────────────────────────────
 data/papers/
