@@ -6,15 +6,12 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
-  // ── API proxy ──────────────────────────────────────────────────────────────
-  // All /api/* and /health requests from the browser are forwarded to the
-  // FastAPI backend on port 8000.  This means the browser NEVER calls port
-  // 8000 directly — no CORS issues, works in both local and sandbox envs.
+  // NOTE: /api/* is now handled by app/api/proxy/[...path]/route.ts (server-side proxy).
+  // We only keep a rewrite for /health so the health check endpoint is also reachable.
   async rewrites() {
     const backendUrl = process.env.BACKEND_URL ?? 'http://localhost:8000';
     return [
-      { source: '/api/:path*',  destination: `${backendUrl}/api/:path*` },
-      { source: '/health',      destination: `${backendUrl}/health` },
+      { source: '/health', destination: `${backendUrl}/health` },
     ];
   },
 };
