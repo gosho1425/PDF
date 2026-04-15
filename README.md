@@ -1,1043 +1,346 @@
-# PaperLens 🔬
+# 🔬 PaperLens v2 — Windows-First Local Research Tool
 
-**Scientific Paper Extraction & Structured Research Data Management**
-
-PaperLens ingests research PDF papers from a **configured host folder** (no browser upload), automatically extracts structured scientific data using Claude AI, and stores everything in a searchable database — ready for analysis and Bayesian optimization of experimental conditions.
-
----
-
-## ⚡ Windows Quick Start
-
-> **New to this?** Start here. Skip to [Detailed Setup](#detailed-setup-all-platforms) for explanations of every step.
-
-**Step 1 — Install Docker Desktop**
-Download and install from https://www.docker.com/products/docker-desktop/
-After installing, open Docker Desktop and wait for the whale icon in the taskbar to show "Docker Desktop is running".
-
-**Step 2 — Download this project**
-If you have Git installed, open **Command Prompt** or **PowerShell** and run:
-```
-git clone https://github.com/gosho1425/PDF.git
-cd PDF
-```
-If you don't have Git, click the green **Code** button on GitHub → **Download ZIP** → extract it → open a terminal inside that folder.
-
-**Step 3 — Create your `.env` file (Windows Command Prompt)**
-```cmd
-copy .env.example .env
-```
-Or in **PowerShell**:
-```powershell
-Copy-Item .env.example .env
-```
-Or just right-click `.env.example` in File Explorer → **Copy** → **Paste** → rename the copy to `.env`.
-
-**Step 4 — Edit `.env`** ← **This step is critical — do not skip it**
-
-Open `.env` in Notepad (or any text editor). Find and fill in **these required lines**:
-```
-POSTGRES_PASSWORD=PaperLens2024!
-ANTHROPIC_API_KEY=sk-ant-YOUR_REAL_KEY_HERE
-HOST_PAPER_DIR=C:\Users\YourName\Documents\papers
-COMPOSE_CONVERT_WINDOWS_PATHS=1
-```
-
-> ⚠️ **`POSTGRES_PASSWORD`** must not be left as `CHANGE_ME_STRONG_PASSWORD` — PostgreSQL will refuse to start. Use any password with at least 8 characters. You do not need to remember it.
-
-> ⚠️ **`HOST_PAPER_DIR`** — write the path only, with nothing after it. **No `# comments`**, no trailing spaces. Everything after the `=` on that line becomes part of the path, including comments. Docker Compose does not strip inline comments from `.env` values.
-
-- `ANTHROPIC_API_KEY` — your key from https://console.anthropic.com/ (starts with `sk-ant-`)
-- `HOST_PAPER_DIR` — the Windows folder containing your PDF files (must already exist on your machine)
-- `COMPOSE_CONVERT_WINDOWS_PATHS=1` — required on Windows so Docker correctly converts `C:\...` paths
-
-Save the file.
-
-> **Tip:** Run `.\scripts\check-env.ps1` in PowerShell to verify all values are correct before starting Docker.
-
-**Step 5 — Start the app**
-```cmd
-docker compose up -d
-```
-
-> **First run note:** Docker will download images and build the frontend (~5–10 min). On subsequent starts it only takes a few seconds.
-
-**Step 6 — Open your browser**
-- App: http://localhost:3000
-- API docs: http://localhost:8000/api/docs
-
-**To stop everything:**
-```cmd
-docker compose down
-```
-
-> **No separate Node.js install needed.** The `package-lock.json` file is already committed in this repo, so Docker can install all frontend dependencies exactly and reproducibly without you needing Node.js on your machine.
+Extract structured scientific data from PDF research papers using AI.  
+**No Docker · No PostgreSQL · No Redis · No cloud infrastructure required.**  
+Runs directly on Windows with Python and Node.js.
 
 ---
 
-## Folder-based Ingestion — Windows Quick Reference
+## What It Does
 
-PaperLens **does not use browser upload**. PDFs are ingested by mounting a host folder into Docker.
+1. You point PaperLens at a folder containing PDF papers.
+2. It recursively finds all PDFs, computes SHA-256 for each, and skips already-processed files.
+3. New PDFs are read by `pdfplumber` and sent to Claude (or GPT-4o) for structured extraction.
+4. Results are stored in:
+   - `data/app.db` — SQLite database
+   - `data/summaries/<name>.txt` — human-readable summary
+   - `data/extractions/<id>.json` — full structured JSON
+5. The UI lets you browse all papers, view extracted variables, and re-process individual files.
 
-### What you add to `.env`
+### Extracted Fields
 
-```env
-HOST_PAPER_DIR=C:\Users\Alice\Documents\papers
-INGEST_DIR=/ingest
-COMPOSE_CONVERT_WINDOWS_PATHS=1
-```
+| Category | Fields |
+|----------|--------|
+| **Bibliographic** | Title, authors, journal, year, DOI, impact factor |
+| **Material info** | Material/compound, substrate, crystal structure, film geometry |
+| **Input variables** | Deposition method/temperature, sputtering power, working pressure, gas composition, film thickness, annealing conditions, oxygen pressure, laser fluence, target composition |
+| **Output variables** | Tc, Jc, RRR, resistivity, surface roughness, crystallinity, lattice parameter, Hc2, coherence length, penetration depth, band gap |
+| **Evidence** | Every value includes: evidence text (verbatim quote), page number, confidence score (0–1) |
 
-> ⚠️ **Critical rules for `HOST_PAPER_DIR`:**
-> - Write the path **only** — no `# comments` after it, no trailing spaces.
->   Docker Compose includes everything after `=` verbatim, including comments.
-> - `COMPOSE_CONVERT_WINDOWS_PATHS=1` is required on Windows for Docker Compose
->   to convert `C:\...` drive-letter paths correctly.
-
-### How Docker Compose mounts it
-
-`docker-compose.yml` uses long-form bind mount syntax (handles Windows paths correctly):
-```yaml
-volumes:
-  - type: bind
-    source: ${HOST_PAPER_DIR:-./data/ingest}
-    target: /ingest
-    read_only: true
-```
-`read_only: true` means the container can read but never modify your host files.
-
-### Supported path formats on Windows
-
-Docker Desktop (with WSL 2) accepts all of these in `.env`:
-
-| Format | Works? |
-|--------|--------|
-| `C:\Users\Alice\papers` | ✅ Yes (backslashes) |
-| `C:/Users/Alice/papers` | ✅ Yes (forward slashes) |
-| `//c/Users/Alice/papers` | ✅ Yes (Git Bash style) |
-
-> **Tip:** Avoid spaces in the path if possible. If you must use them, wrap the whole value in double quotes:
-> `HOST_PAPER_DIR="C:\My Documents\papers"`
-
-### Adding more PDFs later
-
-Just drop new `.pdf` files into the host folder and click **Scan Now** in the UI — or send:
-```
-POST http://localhost:8000/api/v1/papers/scan
-```
-Already-processed files are detected by SHA-256 and never re-ingested.
+Custom parameters can be added in the Settings page — the LLM will extract them for every future paper.
 
 ---
 
-## Table of Contents
-
-1. [What Is This Project?](#what-is-this-project)
-2. [What You Need Before Starting](#what-you-need-before-starting)
-3. [Key Concepts for Beginners](#key-concepts-for-beginners)
-4. [Detailed Setup — All Platforms](#detailed-setup-all-platforms)
-5. [Using the App](#using-the-app)
-6. [Development Setup (without Docker)](#development-setup-without-docker)
-7. [Architecture Overview](#architecture-overview)
-8. [Data Model](#data-model)
-9. [Security](#security)
-10. [Project Structure](#project-structure)
-11. [API Reference](#api-reference)
-12. [Extraction Schema](#extraction-schema)
-13. [Running Tests](#running-tests)
-14. [Branch Strategy](#branch-strategy)
-15. [Phase 2 Roadmap: Bayesian Optimization](#phase-2-roadmap-bayesian-optimization-integration)
-
----
-
-## What Is This Project?
-
-PaperLens is a web application that:
-
-1. **Ingests PDF papers** — you upload one or many PDFs through a browser UI
-2. **Reads them with AI** — sends the text to Claude (Anthropic's AI) running on the server
-3. **Extracts structured data** — pulls out title, authors, methods, results, units, conditions
-4. **Stores everything** — saves it in a database you can search and filter
-5. **Exports for analysis** — download CSV or JSON, ready for Bayesian optimization
-
-Think of it as a smart research assistant that reads your papers and fills in a spreadsheet for you — accurately, with citations back to the source text.
-
----
-
-## What You Need Before Starting
-
-### Required: Docker Desktop
-
-**Docker** is the only thing you must install. It packages the entire application (database, AI backend, web frontend) into containers so you don't need to install Python, Node.js, or PostgreSQL separately.
-
-| Platform | Download |
-|----------|----------|
-| Windows 10/11 | https://www.docker.com/products/docker-desktop/ |
-| macOS (Apple Silicon or Intel) | https://www.docker.com/products/docker-desktop/ |
-| Linux | https://docs.docker.com/engine/install/ |
-
-> **Windows note:** Docker Desktop requires WSL 2 (Windows Subsystem for Linux). The installer will guide you through enabling it. If you see a prompt asking to install WSL 2, click **Yes/Install**.
-
-After installing, **start Docker Desktop** before running any `docker compose` commands. You'll know it's ready when:
-- Windows: the whale icon in the system tray says "Docker Desktop is running"
-- macOS: the whale icon in the menu bar is steady (not animated)
-
-### Required: An Anthropic API Key
-
-PaperLens uses Claude AI to read your papers. You need an API key from Anthropic:
-1. Go to https://console.anthropic.com/
-2. Sign up or log in
-3. Go to **API Keys** → **Create Key**
-4. Copy the key — it starts with `sk-ant-`
-5. You will paste it into your `.env` file (explained below)
-
-> **Cost note:** Claude API calls are billed by usage. Processing one research paper typically costs a few cents. See https://www.anthropic.com/pricing for current rates.
-
-### Optional: Git
-
-Git lets you download ("clone") this repository with one command. If you'd rather not install it, you can use GitHub's **Download ZIP** button instead.
-
-- Windows: https://git-scm.com/download/win (includes Git Bash)
-- macOS: run `git` in Terminal — it will prompt you to install Xcode Command Line Tools
-- Linux: `sudo apt install git` or `sudo dnf install git`
-
----
-
-## Key Concepts for Beginners
-
-### What is the repository folder?
-
-When you clone or unzip this project, you get a folder (e.g., `PDF` or `paperlens`). That folder is the **repository**. It contains all the source code, configuration files, and documentation. You run all commands from inside this folder.
-
-### What is `.env`?
-
-`.env` is a plain text file that holds **secret configuration values** for your specific installation — things like database passwords and API keys. It is never shared or committed to Git (it's listed in `.gitignore`).
-
-`.env.example` is a safe template with placeholder values. Your job is to copy it to `.env` and fill in the real values.
-
-Think of `.env.example` as a blank form, and `.env` as your filled-in copy.
-
-### What is `POSTGRES_PASSWORD`?
-
-PostgreSQL is the database that stores all your papers and extracted data. `POSTGRES_PASSWORD` is the password for the database. You can set it to any strong password — it only needs to match between the database service and the backend. A good example: `MyStrongPassword2024!`
-
-You don't need to remember it day-to-day. Docker manages the database internally; you only ever connect to it through the app.
-
-### Where does `ANTHROPIC_API_KEY` go?
-
-In your `.env` file, find this line:
-```
-ANTHROPIC_API_KEY=sk-ant-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-```
-Replace `sk-ant-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` with your real key from https://console.anthropic.com/.
-
-**Security:** This key is only used by the backend server running inside Docker. It is never sent to your browser or exposed publicly. See [Security](#security) for details.
-
-### What does `docker compose up -d` do?
-
-It starts all the services defined in `docker-compose.yml`:
-- A PostgreSQL database
-- A Redis job queue
-- The Python/FastAPI backend
-- A Celery background worker (processes PDFs)
-- The Next.js frontend
-
-The `-d` flag means "detached" — it runs everything in the background so your terminal is free.
-
----
-
-## Detailed Setup — All Platforms
-
-### Step 1: Install Docker Desktop
-
-See [What You Need Before Starting](#what-you-need-before-starting) above.
-
-Verify Docker is running by opening a terminal and typing:
-
-**Windows Command Prompt / PowerShell / macOS / Linux:**
-```
-docker --version
-docker compose version
-```
-You should see version numbers, not error messages.
-
----
-
-### Step 2: Get the Project Files
-
-**If you have Git:**
-
-*Windows Command Prompt:*
-```cmd
-git clone https://github.com/gosho1425/PDF.git
-cd PDF
-```
-
-*PowerShell:*
-```powershell
-git clone https://github.com/gosho1425/PDF.git
-Set-Location PDF
-```
-
-*macOS / Linux:*
-```bash
-git clone https://github.com/gosho1425/PDF.git
-cd PDF
-```
-
-**If you don't have Git:**
-1. Go to https://github.com/gosho1425/PDF
-2. Click the green **Code** button → **Download ZIP**
-3. Extract the ZIP file
-4. Open a terminal and navigate into the extracted folder
-
-*Windows Command Prompt — navigate into the folder:*
-```cmd
-cd C:\Users\YourName\Downloads\PDF-main
-```
-
-*PowerShell:*
-```powershell
-Set-Location C:\Users\YourName\Downloads\PDF-main
-```
-
-*macOS / Linux:*
-```bash
-cd ~/Downloads/PDF-main
-```
-
----
-
-### Step 3: Create Your `.env` File
-
-The project ships with `.env.example` — a template. You need to copy it to `.env`.
-
-**Windows Command Prompt:**
-```cmd
-copy .env.example .env
-```
-
-**PowerShell:**
-```powershell
-Copy-Item .env.example .env
-```
-
-**macOS / Linux:**
-```bash
-cp .env.example .env
-```
-
-**Alternative (all platforms):** In File Explorer / Finder, right-click `.env.example` → Copy → Paste → rename the copy to `.env`.
-
-> If you run the helper script instead, it does this copy automatically:
-> - Windows PowerShell: `.\scripts\setup-env.ps1`
-> - macOS / Linux: `bash scripts/setup-env.sh`
-
----
-
-### Step 4: Edit `.env` — Fill in Required Values
-
-Open `.env` in any text editor:
-
-**Windows:** Right-click `.env` → **Open with** → **Notepad** (or VS Code if installed)
-
-**macOS:** Open Terminal, type `open -e .env`
-
-**Linux:** `nano .env` or `gedit .env`
-
-Find and fill in these required lines:
-
-```
-POSTGRES_PASSWORD=PaperLens2024!
-ANTHROPIC_API_KEY=sk-ant-YOUR_REAL_KEY_HERE
-HOST_PAPER_DIR=C:\Users\YourName\Documents\papers
-COMPOSE_CONVERT_WINDOWS_PATHS=1
-```
-
-- Replace `PaperLens2024!` with any strong password (no spaces).
-- Replace `sk-ant-YOUR_REAL_KEY_HERE` with your real Anthropic API key.
-- Replace `C:\Users\YourName\Documents\papers` with the actual path to your PDF folder.
-- Keep `COMPOSE_CONVERT_WINDOWS_PATHS=1` — required on Windows.
-
-> ⚠️ **`HOST_PAPER_DIR` rule**: write the path and nothing else on that line — **no `# comments`**, no trailing spaces.  
-> Docker Compose treats everything after `=` literally, so `HOST_PAPER_DIR=C:\papers  # my folder` would set the path to `C:\papers  # my folder` (with the comment text), and the mount will fail.
-
-**Windows users:** backslashes (`\`) and forward slashes (`/`) both work.  
-**macOS / Linux users:** use a normal Unix path, e.g. `/home/alice/papers`. You can remove `COMPOSE_CONVERT_WINDOWS_PATHS`.
-
-Everything else can stay as-is for a first run.
-
-Save and close the file.
-
----
-
-### Step 5: Start the Application
-
-Make sure Docker Desktop is **open and running** first.
-
-Open a terminal in the project folder and run:
-
-**Windows Command Prompt:**
-```cmd
-docker compose up -d
-```
-
-**PowerShell:**
-```powershell
-docker compose up -d
-```
-
-**macOS / Linux:**
-```bash
-docker compose up -d
-```
-
-The first time you run this, Docker will:
-1. Download base images (Postgres, Redis, Node.js) from Docker Hub
-2. Build the frontend — `npm ci` installs packages from the committed `package-lock.json`, then `next build` compiles the app
-3. Build the backend Python image
-
-This takes **5–10 minutes** on the first run. Subsequent starts reuse the cached layers and complete in seconds.
-
-> **You do not need Node.js installed on your machine.** The `package-lock.json` file is committed in this repository, so Docker can install all frontend dependencies precisely and reproducibly inside the container.
-
-You should see output like:
-```
-✔ Container pdf-db-1        Started
-✔ Container pdf-redis-1     Started
-✔ Container pdf-api-1       Started
-✔ Container pdf-worker-1    Started
-✔ Container pdf-frontend-1  Started
-```
-
-#### Check that everything started correctly
-
-**Windows Command Prompt / PowerShell / macOS / Linux:**
-```
-docker compose ps
-```
-
-All services should show `running` or `healthy`. If any show `exited`, see [Troubleshooting](#troubleshooting) below.
-
----
-
-### Step 6: Open the App
-
-Once all containers are running, open your browser:
-
-| Service | URL | What it is |
-|---------|-----|------------|
-| **App (frontend)** | http://localhost:3000 | Main UI — ingest & review papers |
-| **Ingest page** | http://localhost:3000/ingest | Scan folder, view stats & logs |
-| **API docs** | http://localhost:8000/api/docs | Interactive API reference |
-| **Task monitor** | http://localhost:5555 | Watch background jobs run |
-
----
-
-### Step 7: Stopping and Restarting
-
-**Stop everything (keeps your data):**
-
-*All platforms:*
-```
-docker compose down
-```
-
-**Restart after stopping:**
-```
-docker compose up -d
-```
-
-**Stop and delete all data (full reset):**
-```
-docker compose down -v
-```
-> ⚠️ The `-v` flag deletes the database and uploaded files. Only use this if you want a completely fresh start.
-
----
-
-### Troubleshooting
-
-> **Quickest diagnostic:** Run the check script — it inspects every common failure cause and tells you exactly what to fix:
-> - **Windows PowerShell:** `.\scripts\check-env.ps1`
-> - **macOS / Linux:** `bash scripts/check-env.sh`
-
----
-
-#### ❌ `pdf-db-1` fails / `pdf-migrate-1` exits with code 1
-
-This is the **most common startup failure on Windows**. There are four causes — work through them in order:
-
-**First: check the logs to see the real error message**
-```cmd
-docker compose logs db
-docker compose logs migrate
-```
-
-**Cause 1 (most common): `POSTGRES_PASSWORD` is empty or still the placeholder**
-
-PostgreSQL 15 refuses to start if the password is blank or contains `CHANGE_ME`.
-
-1. Open `.env` in Notepad
-2. Find this line: `POSTGRES_PASSWORD=CHANGE_ME_STRONG_PASSWORD`
-3. Replace with a real password, e.g. `POSTGRES_PASSWORD=PaperLens2024!`
-4. Save and restart:
-   ```cmd
-   docker compose down
-   docker compose up -d
-   ```
-
-**Cause 2: Password contains special characters (`@`, `#`, `/`, `%`, `?`, `:`)**
-
-Passwords containing these characters can break the database connection URL even when the password is otherwise correct. The app now URL-encodes the password automatically, but if you see errors like `password authentication failed` despite the correct password being set, try a simpler password without special characters:
-
-```
-POSTGRES_PASSWORD=PaperLens2024simple
-```
-
-**Cause 3: Stale volume from a previous run with a different password**
-
-If you already ran `docker compose up -d` once (even briefly) with one password, then changed the password in `.env`, PostgreSQL will reject the new password because the volume still holds the database initialised with the old one.
-
-Fix — **this deletes all stored data**:
-```cmd
-docker compose down -v
-docker compose up -d
-```
-
-**Cause 4: Partial migration left broken state (enum type already exists)**
-
-If a previous migration run crashed halfway (e.g. due to password/network issue), the PostgreSQL ENUM types may have been created but the migration was not recorded. On the next run, `alembic upgrade head` would fail with `ERROR: type "paper_status" already exists`.
-
-The migration is now fully idempotent — it uses `DO $$ ... EXCEPTION WHEN duplicate_object` blocks that skip ENUM creation if the type already exists. If you are on an older version of the code, a clean reset fixes it:
-```cmd
-docker compose down -v
-docker compose up -d
-```
-
-**Cause 5: Docker Desktop / WSL 2 not ready yet**
-
-On a freshly rebooted Windows machine, Docker Desktop can take 30–60 seconds after the icon appears before it's fully ready. Wait until the whale icon in the system tray stops animating, then retry:
-```cmd
-docker compose up -d
-```
-
-**Still failing? Get a detailed diagnosis:**
-```cmd
-docker compose logs --tail=50 migrate
-```
-Look for lines like:
-- `[wait_for_db] Attempt X/30 failed` → Postgres is slow to start; wait a moment and retry
-- `type "paper_status" already exists` → You need `docker compose down -v && docker compose up -d`
-- `password authentication failed` → Check `POSTGRES_PASSWORD` in `.env`
-- `could not connect to server` → Check Docker Desktop is running and `POSTGRES_HOST=db`
-
----
-
-**"docker: command not found" or "docker is not recognized"**
-→ Docker Desktop is not installed or not running. Install it from https://www.docker.com/products/docker-desktop/ and make sure it is open.
-
-**"Cannot connect to the Docker daemon"**
-→ Docker Desktop is installed but not started. Open Docker Desktop from your Start Menu / Applications folder and wait for it to show "Running".
-
-**"error during connect" on Windows**
-→ WSL 2 may not be enabled. Open Docker Desktop → Settings → General → ensure "Use the WSL 2 based engine" is checked. Or run `wsl --install` in an administrator PowerShell.
-
-**A container exits immediately (other than db)**
-Run `docker compose logs <service-name>` to see the error message. Replace `<service-name>` with `api`, `worker`, `migrate`, `frontend`, etc.
-
-**Frontend build fails with "npm ci can only install with an existing package-lock.json"**
-This file is committed in the repository and should always be present after `git clone`. Re-clone if missing:
-```
-git clone https://github.com/gosho1425/PDF.git
-```
-Or force a clean frontend rebuild:
-```
-docker compose build --no-cache frontend
-```
-
-**Port already in use**
-If port 3000 or 8000 is already used by another app, edit `.env` and change `FRONTEND_PORT` or `API_PORT` to a different number, then restart.
-
-**Ingestion folder shows "Not mounted"**
-
-This is the most common issue after editing `.env`. Work through these causes:
-
-**Cause 1 — Inline comment or trailing space on the `HOST_PAPER_DIR` line (most common)**
-
-Docker Compose reads the *entire* rest of the line after `=` as the value. An inline comment becomes part of the path:
-```
-# WRONG — the path will be: C:\papers   # my PDFs
-HOST_PAPER_DIR=C:\papers   # my PDFs
-
-# RIGHT — nothing after the path
-HOST_PAPER_DIR=C:\papers
-```
-Open `.env` in Notepad, find the `HOST_PAPER_DIR` line, and remove everything after the actual folder path. Save, then restart.
-
-**Cause 2 — Missing `COMPOSE_CONVERT_WINDOWS_PATHS=1` on Windows**
-
-Without this variable, Docker Compose may not convert `C:\...` paths correctly. Add it to `.env`:
-```
-COMPOSE_CONVERT_WINDOWS_PATHS=1
-```
-
-**Cause 3 — Did not restart Docker after editing `.env`**
-
-Compose reads `.env` only on startup — a running container never sees changes. You must restart:
-```cmd
-docker compose down && docker compose up -d
-```
-
-**Cause 4 — The folder does not exist on your host machine**
-
-Create the folder first, then restart:
-```cmd
-mkdir C:\Users\YourName\Documents\papers
-docker compose down && docker compose up -d
-```
-
-After restarting, click **Refresh** on the Ingest page — it should show "✓ Mounted" and the PDF count.
-
-**Cause 5 — Use the built-in diagnostics panel**
-
-On the Ingest page, click **Show diagnostics** (small link at the bottom of the Ingestion Folder card). It reveals:
-- The exact `INGEST_DIR` value the container sees
-- The raw `INGEST_DIR` environment variable as loaded in the running container
-- Whether the folder is the fallback empty mount
-- The specific OS-level `mount_error` message
-
-You can also open the raw API response in your browser to see all fields:
-```
-http://localhost:8000/api/v1/papers/ingest-status
-```
-Look at `"mounted"`, `"mount_error"`, `"ingest_dir_from_env"`, and `"is_fallback_mount"` — these tell you exactly what the container can see.
-
-**Cause 6 — "Fallback (empty)" badge instead of "Not mounted"**
-
-If the UI shows **"⚠ Fallback (empty)"** rather than "Not mounted", it means `HOST_PAPER_DIR` was not set in `.env` at all, so Docker Compose used the project's internal `data/ingest/` directory (which is empty). Fix: set `HOST_PAPER_DIR` to your PDF folder path and restart Docker.
-
-**App opens but shows errors after scanning**
-Check that `ANTHROPIC_API_KEY` in `.env` is correct and that your Anthropic account has available credits.
-
----
-
-## Using the App
-
-### 0. Folder-based Ingestion (New Workflow)
-
-PaperLens no longer uses browser-based file upload. Instead:
-
-1. Place your PDF files in the folder you set as `HOST_PAPER_DIR` in `.env`
-2. Open http://localhost:3000/ingest in your browser
-3. Check the **Ingestion Folder** card — it shows whether the folder is mounted and how many PDFs are inside
-4. Click **Scan Now** to queue all new PDFs for processing
-   - Already-ingested files are detected by **SHA-256 hash** and silently skipped
-   - The scan log shows: found / ingested / skipped / failed counts
-5. You can also trigger a scan programmatically:
-   ```
-   POST http://localhost:8000/api/v1/papers/scan
-   ```
-
-> **Windows path example:** If your PDFs are in `C:\Users\Alice\Documents\papers`, set `HOST_PAPER_DIR=C:\Users\Alice\Documents\papers` in `.env`. Docker Desktop on Windows converts the path automatically — no WSL path conversion needed.
-
-### 1. Scan for Papers
-
-- Go to **Ingest** tab at http://localhost:3000/ingest
-- Verify the folder is mounted (green ✓ badge)
-- Click **Scan Now** — each PDF is queued with a unique ID
-
-### 2. Monitor Processing
-
-- The **Dashboard** shows real-time pipeline status
-- Each paper progresses through: `uploaded → parsing → parsed → extracting → extracted`
-- Status badges are colour-coded (green = done, yellow = in progress, red = failed)
-- Failed papers can be retried with the **Reprocess** button
-
-### 3. Review Extractions
-
-- Click any paper to open the **detail view**
-- The **Extraction Panel** shows all structured data with:
-  - Confidence scores for each field (0–100%)
-  - Source text snippets — the exact quote from the paper
-  - "Review needed" flags for uncertain values
-- Click **Edit** to manually correct any field
-- All manual edits are tracked (`human_edited = true`)
-
-### 4. Download Files
-
-Per-paper output files:
-- `summary.md` — human-readable extraction summary
-- `extraction.json` — machine-readable structured data with provenance
-
-### 5. Export for Analysis
-
-Go to **Data Table** → click **Export CSV** or **Export JSON**.
-
-The JSON export includes a `bo_ready` block with `X` (input variables) and `y` (output variables) split, ready for Bayesian optimization.
-
----
-
-## Development Setup (without Docker)
-
-> Use this if you want to edit the code and see live changes. Requires Python 3.11+ and Node.js 20+ installed locally, plus a running PostgreSQL and Redis instance.
-
-### Backend
-
-**macOS / Linux:**
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-**Windows Command Prompt:**
-```cmd
-cd backend
-python -m venv .venv
-.venv\Scripts\activate.bat
-pip install -r requirements.txt
-```
-
-**Windows PowerShell:**
-```powershell
-cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-> **PowerShell execution policy:** If you see "cannot be loaded because running scripts is disabled", run:
-> `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
-
-**Set environment variables and run migrations:**
-
-*macOS / Linux:*
-```bash
-# Copy env if you haven't already
-cp ../.env.example ../.env
-# Edit ../.env with your values, then:
-set -a && source ../.env && set +a
-alembic upgrade head
-uvicorn app.main:app --reload --port 8000
-```
-
-*Windows Command Prompt (set each variable individually, or use the .env file):*
-```cmd
-set POSTGRES_HOST=localhost
-set POSTGRES_PORT=5432
-set POSTGRES_DB=paperlens
-set POSTGRES_USER=paperlens
-set POSTGRES_PASSWORD=your_password_here
-set ANTHROPIC_API_KEY=sk-ant-your-key-here
-alembic upgrade head
-uvicorn app.main:app --reload --port 8000
-```
-
-*Windows PowerShell:*
-```powershell
-$env:POSTGRES_HOST="localhost"
-$env:POSTGRES_PORT="5432"
-$env:POSTGRES_DB="paperlens"
-$env:POSTGRES_USER="paperlens"
-$env:POSTGRES_PASSWORD="your_password_here"
-$env:ANTHROPIC_API_KEY="sk-ant-your-key-here"
-alembic upgrade head
-uvicorn app.main:app --reload --port 8000
-```
-
-### Celery Worker
-
-*macOS / Linux (in a separate terminal):*
-```bash
-cd backend
-source .venv/bin/activate
-celery -A app.workers.celery_app:celery_app worker --loglevel=debug --queues=parse,extract,pipeline
-```
-
-*Windows Command Prompt (in a separate terminal):*
-```cmd
-cd backend
-.venv\Scripts\activate.bat
-celery -A app.workers.celery_app:celery_app worker --loglevel=debug --queues=parse,extract,pipeline
-```
-
-> **Windows note:** Celery has limited support on Windows without extra configuration. For local development on Windows, using `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` is strongly recommended over running Celery natively.
-
-### Frontend
-
-*All platforms (in a separate terminal):*
-```
-cd frontend
-npm install
-npm run dev
-```
-
-### Development mode with Docker (hot-reload)
-
-This runs the full stack with live code reloading — the recommended approach for development:
-
-```
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up
-```
-
-*Windows Command Prompt:*
-```cmd
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up
-```
-
----
-
-## Architecture Overview
-
-```
-┌─────────────┐    HTTP     ┌─────────────────────────────────────┐
-│  Next.js    │ ─────────▶ │         FastAPI Backend               │
-│  Frontend   │             │                                       │
-│  (Browser)  │             │  ┌──────────┐   ┌──────────────┐    │
-└─────────────┘             │  │PDF Parser│   │  LLM Service │    │
-                             │  │(pdfplumb)│   │(Claude API)  │    │
- ⚠️ NO API KEYS             │  └──────────┘   └──────────────┘    │
-   in frontend!             │         │               │             │
-                             │         ▼               ▼             │
-                             │  ┌─────────────────────────────┐    │
-                             │  │   Celery Workers (async)    │    │
-                             │  └────────────┬────────────────┘    │
-                             └───────────────┼─────────────────────┘
-                                             │
-                    ┌────────────────────────┼────────────────────┐
-                    │                        │                     │
-                    ▼                        ▼                     ▼
-             ┌──────────┐           ┌─────────────┐       ┌──────────┐
-             │PostgreSQL│           │    Redis     │       │   Files  │
-             │(data)    │           │(job queue)   │       │/data/    │
-             └──────────┘           └─────────────┘       │papers/   │
-                                                           └──────────┘
-```
-
-### Key Design Decisions
-
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Backend | Python FastAPI | Async performance; Python ecosystem for future BO modules |
-| LLM | Claude 3.5 Sonnet (server-side) | Best scientific extraction quality; secure key management |
-| Database | PostgreSQL + JSONB | Structured queries + flexible scientific fields |
-| Job Queue | Celery + Redis | Async processing; rate limiting; retry logic |
-| Frontend | Next.js + TypeScript | Type-safe; fast; modern developer experience |
-| ORM | SQLAlchemy 2.0 | Async support; mature migration tooling |
-| PDF | pdfplumber + OCR fallback | Handles both digital and scanned PDFs |
-
----
-
-## Data Model
-
-```
-Paper (one per PDF)
- ├── Journal
- ├── PaperAuthor → Author (many-to-many)
- └── ExtractionRecord (canonical + historical versions)
-      ├── MaterialEntity       ← material/system studied
-      ├── ProcessCondition     ← [BO-INPUT] fabrication parameters
-      ├── MeasurementMethod    ← characterization techniques
-      ├── ResultProperty       ← [BO-OUTPUT] quantitative results
-      └── SourceEvidence       ← provenance: page, quote, confidence
-```
-
-### Bayesian Optimization Readiness
-
-Every `ProcessCondition` and `ResultProperty` has a `variable_role`:
-- `"input"` → controllable process parameter (X matrix)
-- `"output"` → measured performance metric (y vector)
-- `"contextual"` → non-controllable context
-
-The export JSON includes a `bo_ready` block:
-```json
-{
-  "bo_ready": {
-    "X": {"annealing_temperature": {"value": 350, "unit": "°C"}},
-    "y": {"TMR_ratio": {"value": 600, "unit": "%"}}
-  }
-}
-```
-
----
-
-## Security
-
-- **API key never touches the frontend.** `ANTHROPIC_API_KEY` lives in `.env` and is only read by the backend Python process inside Docker. Your browser never sees it.
-- **`.env` is gitignored.** Only `.env.example` (with placeholder values) is committed to Git. Your real `.env` file stays on your machine only.
-- Input validation via Pydantic on every API endpoint.
-- File type and size validation on upload (PDF only, max 100 MB).
-- Duplicate detection by SHA-256 hash.
-- No real secrets in any code file committed to this repository.
-
----
-
-## Project Structure
+## Repository Structure
 
 ```
 paperlens/
-├── backend/
+├── backend/                  ← FastAPI + SQLAlchemy + SQLite
 │   ├── app/
-│   │   ├── api/v1/          # FastAPI route handlers
-│   │   ├── core/            # Config, logging
-│   │   ├── db/              # SQLAlchemy session management
-│   │   ├── models/          # SQLAlchemy ORM models
-│   │   ├── schemas/         # Pydantic schemas (including LLM output)
+│   │   ├── api/v1/           ← REST endpoints
+│   │   │   ├── papers_router.py
+│   │   │   ├── scan_router.py
+│   │   │   └── settings_router.py
+│   │   ├── core/
+│   │   │   ├── config.py     ← pydantic-settings (reads .env)
+│   │   │   └── logging.py
+│   │   ├── db/
+│   │   │   └── database.py   ← SQLAlchemy engine + session
+│   │   ├── llm/
+│   │   │   ├── base.py       ← abstract LLMProvider + data classes
+│   │   │   ├── factory.py    ← provider selection
+│   │   │   ├── schema.py     ← prompt builder + response parser
+│   │   │   └── providers/
+│   │   │       ├── anthropic_provider.py
+│   │   │       └── openai_provider.py
+│   │   ├── models/           ← SQLAlchemy ORM models
 │   │   ├── services/
-│   │   │   ├── pdf_parser.py       # Native + OCR extraction
-│   │   │   ├── llm_extractor.py    # Claude API integration
-│   │   │   ├── output_generator.py # summary.md + extraction.json
-│   │   │   ├── paper_service.py    # DB operations
-│   │   │   └── storage.py          # File storage abstraction
-│   │   ├── workers/
-│   │   │   ├── celery_app.py       # Celery configuration
-│   │   │   └── tasks.py            # parse_pdf, extract_paper, etc.
-│   │   └── main.py                 # FastAPI application
-│   ├── alembic/             # Database migrations
-│   ├── prompts/             # LLM prompt templates
-│   └── tests/               # Unit tests
+│   │   │   ├── pdf_reader.py ← pdfplumber + PyMuPDF fallback
+│   │   │   ├── scanner.py    ← core ingestion engine
+│   │   │   └── settings_service.py
+│   │   └── main.py           ← FastAPI app + CORS + startup
+│   ├── requirements.txt
+│   └── .env.example          ← copy to .env and add API key
 │
-├── frontend/
-│   └── src/
-│       ├── app/             # Next.js App Router pages
-│       │   ├── dashboard/   # Status overview
-│       │   ├── upload/      # PDF upload
-│       │   ├── papers/      # Paper list + detail
-│       │   └── table/       # Data export table
-│       ├── components/      # React components
-│       ├── lib/             # API client, utilities
-│       └── types/           # TypeScript type definitions
+├── frontend/                 ← Next.js 14 + Tailwind CSS
+│   ├── app/
+│   │   ├── page.tsx          ← Dashboard
+│   │   ├── scan/page.tsx     ← Scan controls
+│   │   ├── papers/
+│   │   │   ├── page.tsx      ← Paper list
+│   │   │   └── [id]/page.tsx ← Paper detail + extractions
+│   │   └── settings/page.tsx ← Folder + custom params config
+│   ├── components/
+│   │   ├── layout/Nav.tsx
+│   │   └── ui/
+│   │       ├── StatusBadge.tsx
+│   │       └── Toaster.tsx
+│   ├── lib/api.ts            ← axios API client
+│   └── types/index.ts        ← TypeScript interfaces
 │
-├── scripts/
-│   ├── setup-env.ps1        # Windows PowerShell setup helper
-│   └── setup-env.sh         # macOS/Linux setup helper
-│
-├── data/                    # Runtime data (gitignored)
-│   ├── papers/{paper_id}/
-│   │   ├── original.pdf
-│   │   ├── summary.md
-│   │   └── extraction.json
-│   └── exports/
-│
-├── nginx/                   # Nginx config (production proxy)
-├── docker-compose.yml       # Main Docker Compose config
-├── docker-compose.dev.yml   # Development overrides (hot-reload)
-├── .env.example             # Safe template — copy to .env
-├── .gitignore               # Excludes .env, secrets, caches
-└── README.md                # This file
+└── data/                     ← Created automatically on first run
+    ├── app.db                ← SQLite database
+    ├── summaries/            ← .txt summary files
+    └── extractions/          ← .json extraction files
 ```
 
 ---
 
-## API Reference
+## Windows Setup Guide (Beginner-Friendly)
 
-Full interactive docs: http://localhost:8000/api/docs (only available when the app is running)
+### Prerequisites
+
+Install these if you haven't already:
+
+| Tool | Download | Version |
+|------|----------|---------|
+| Python | https://python.org/downloads | 3.10+ |
+| Node.js | https://nodejs.org | 18+ LTS |
+| Git | https://git-scm.com | any |
+
+> **Tip:** During Python install, check **"Add Python to PATH"**.
+
+---
+
+### Step 1 — Clone the Repository
+
+Open **Command Prompt** or **PowerShell**:
+
+```cmd
+git clone https://github.com/gosho1425/PDF.git paperlens
+cd paperlens
+git checkout paperlens-v2-mvp
+```
+
+---
+
+### Step 2 — Backend Setup
+
+```cmd
+cd backend
+
+REM Create a virtual environment
+python -m venv .venv
+
+REM Activate it (Command Prompt)
+.venv\Scripts\activate.bat
+
+REM Or activate in PowerShell:
+REM .venv\Scripts\Activate.ps1
+
+REM Install dependencies
+pip install -r requirements.txt
+```
+
+**Configure your API key:**
+
+```cmd
+REM Windows copy
+copy .env.example .env
+notepad .env
+```
+
+Edit `.env` — set your Anthropic API key:
+
+```env
+ANTHROPIC_API_KEY=sk-ant-your-actual-key-here
+```
+
+Get a key at: https://console.anthropic.com
+
+---
+
+### Step 3 — Frontend Setup
+
+Open a **second terminal** (keep the backend terminal open):
+
+```cmd
+cd paperlens\frontend
+npm install
+```
+
+---
+
+### Step 4 — Start Everything
+
+**Terminal 1 — Backend:**
+
+```cmd
+cd paperlens\backend
+.venv\Scripts\activate.bat
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+You should see:
+```
+INFO: PaperLens v2.0.0 starting…
+INFO: Database: data\app.db
+INFO: LLM: anthropic / claude-sonnet-4-5
+INFO: Ready — API docs at http://localhost:8000/api/docs
+INFO: Uvicorn running on http://0.0.0.0:8000
+```
+
+**Terminal 2 — Frontend:**
+
+```cmd
+cd paperlens\frontend
+npm run dev
+```
+
+You should see:
+```
+  ▲ Next.js 14.x.x
+  - Local: http://localhost:3000
+```
+
+---
+
+### Step 5 — Use the App
+
+1. Open **http://localhost:3000** in your browser.
+2. Click **Settings** in the top menu.
+3. Enter your PDF folder path, e.g. `C:\Users\YourName\Documents\Papers`
+4. Click **Validate Path** → **Save Settings**.
+5. Click **Scan** → **Scan Now**.
+6. Wait for extraction (30–120 seconds per paper).
+7. Click **Papers** to see results.
+
+---
+
+## Switching LLM Provider
+
+Edit `backend/.env`:
+
+```env
+# Use OpenAI instead of Anthropic
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o
+OPENAI_API_KEY=sk-your-openai-key-here
+```
+
+Restart the backend:
+
+```cmd
+REM Press Ctrl+C in backend terminal, then:
+uvicorn app.main:app --reload
+```
+
+---
+
+## Adding Custom Extraction Parameters
+
+In the Settings page, scroll to **Custom Extraction Parameters** and click **Add Parameter**:
+
+| Field | Example |
+|-------|---------|
+| Name | `vortex_density` |
+| Label | `Vortex Density` |
+| Unit | `cm⁻²` |
+| Role | `output` (measured result) |
+| Description | `Vortex density from magnetic imaging` |
+
+These parameters are added to every LLM extraction prompt for all future scans.
+
+---
+
+## API Documentation
+
+Interactive API docs (Swagger UI):  
+**http://localhost:8000/api/docs**
 
 Key endpoints:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/v1/papers/upload` | Upload PDFs (multi-file) |
-| POST | `/api/v1/papers/scan-folder` | Scan local folder |
-| GET | `/api/v1/papers` | List papers (search, filter, sort) |
-| GET | `/api/v1/papers/{id}` | Paper detail |
-| PATCH | `/api/v1/papers/{id}` | Update metadata |
-| POST | `/api/v1/papers/{id}/reprocess` | Re-run pipeline |
-| GET | `/api/v1/papers/{id}/summary` | Download summary.md |
-| GET | `/api/v1/papers/{id}/extraction-json` | Download extraction.json |
-| GET | `/api/v1/extractions/{paper_id}` | Get extraction record |
-| PATCH | `/api/v1/extractions/{paper_id}` | Update extraction (manual edit) |
-| GET | `/api/v1/extractions/{paper_id}/evidence` | Get source provenance |
-| POST | `/api/v1/export/papers` | Export CSV or JSON |
+| GET | `/api/settings` | Get current settings + folder status |
+| POST | `/api/settings` | Update folder path or custom parameters |
+| POST | `/api/settings/validate-folder` | Check if a folder path is valid |
+| GET | `/api/settings/llm` | Show LLM config (no API keys) |
+| POST | `/api/scan` | Run folder scan (blocking) |
+| GET | `/api/scan/status` | Last scan result |
+| GET | `/api/papers` | List papers (filterable, searchable) |
+| GET | `/api/papers/{id}` | Full paper detail with extraction |
+| GET | `/api/papers/{id}/summary` | Plain-text summary file |
+| POST | `/api/papers/{id}/reprocess` | Re-run LLM for one paper |
+| DELETE | `/api/papers/{id}` | Delete paper + output files |
+| GET | `/health` | Health check |
 
 ---
 
-## Extraction Schema
+## Troubleshooting
 
-The LLM is prompted to extract:
+### "No module named 'app'"
 
-### Input Variables (X for optimization)
-- Deposition method, temperature, pressure, time
-- Annealing temperature, time, atmosphere
-- Film thickness, rate
-- Substrate, composition, dopants
+Make sure you're running `uvicorn` from the `backend/` directory:
 
-### Output Variables (y for optimization)
-- Conductivity / resistivity
-- Magnetic: coercivity, TMR/GMR/SMR, Curie temperature, magnetization
-- Electrical: mobility, carrier density, switching current
-- Optical: bandgap, refractive index
-- Structural: roughness, grain size, domain size
-
-### Provenance (every important field)
-- Source text (exact quote from paper)
-- Page number
-- Confidence score (0–1)
-- Inferred vs. directly stated
-
----
-
-## Running Tests
-
-*All platforms (with virtual environment activated):*
-```
-cd backend
-pytest tests/unit -v
-pytest tests/unit -v --cov=app --cov-report=html
+```cmd
+cd paperlens\backend
+uvicorn app.main:app --reload
 ```
 
-*With Docker (no local Python needed):*
-```
-docker compose exec api pytest tests/unit -v
+### "ANTHROPIC_API_KEY is not set"
+
+Your `backend/.env` file is missing or the key is wrong:
+
+```cmd
+type backend\.env   REM Check the file exists and has the key
 ```
 
----
+### "pdfplumber failed"
 
-## Branch Strategy
+Some PDFs are scanned images without text layer. OCR is not included in MVP.  
+Try using Adobe Acrobat's "Make Searchable PDF" feature first.
 
+### Frontend can't reach backend
+
+Check that:
+1. Backend is running on port 8000 (`http://localhost:8000/health` should return `{"status":"ok"}`)
+2. No firewall is blocking port 8000
+
+### Port 8000 already in use
+
+```cmd
+REM Use a different port
+uvicorn app.main:app --reload --port 8001
 ```
-main                    → Production-ready code
-genspark_ai_developer   → AI development branch (PR → main)
-feature/xxx             → Feature branches (PR → main)
-fix/xxx                 → Bug fix branches
+
+Then update the frontend's API URL:
+
+```cmd
+REM In frontend directory
+set NEXT_PUBLIC_API_URL=http://localhost:8001
+npm run dev
 ```
 
 ---
 
-## Phase 2 Roadmap: Bayesian Optimization Integration
+## What Was Removed from v1 (Docker version)
 
-The data schema is already designed for BO. Phase 2 will add:
+| v1 Component | v2 Replacement | Reason |
+|---|---|---|
+| Docker / Docker Compose | Run directly with Python + Node.js | No setup complexity on Windows |
+| PostgreSQL | SQLite (`data/app.db`) | No server needed, file-based |
+| Redis | In-process state (`dict`) | No broker needed for sync scans |
+| Celery workers | Direct function call in API | Simpler, blocking scan per request |
+| Alembic migrations | `Base.metadata.create_all()` | Schema auto-created on startup |
+| nginx | Next.js dev server | Direct `npm run dev` |
+| Flower (Celery monitor) | Scan status endpoint | Lightweight alternative |
+| Docker bind mounts | User-configured folder path in Settings UI | Works with any Windows path |
+| INGEST_DIR env var | `paper_folder` in SQLite settings | Configurable at runtime |
 
-### 1. Dataset Assembly Module (`backend/app/bo/dataset.py`)
-```python
-# Already possible with current schema:
-X = db.query(ProcessCondition).filter_by(variable_role="input").to_dataframe()
-y = db.query(ResultProperty).filter_by(variable_role="output").to_dataframe()
-```
+---
 
-### 2. Surrogate Model (`backend/app/bo/surrogate.py`)
-- Gaussian Process regression on (X, y)
-- Handle missing values via imputation flags
-- Per-property uncertainty quantification
+## Development Notes
 
-### 3. Acquisition Function (`backend/app/bo/acquisition.py`)
-- Expected Improvement (EI)
-- Upper Confidence Bound (UCB)
-- Multi-objective: Pareto front suggestions
-
-### 4. Recommendation API (`/api/v1/bo/recommend`)
-- Input: target property + constraints
-- Output: recommended process conditions + uncertainty
-- Integration with existing paper data
-
-### 5. Visualization Dashboard
-- Pareto front plots
-- GP posterior visualization
-- Recommendation history
-
-**No database refactoring needed** — the `variable_role` field, `input_variables`/`output_variables` JSONB columns, and `bo_ready` export format are already in place.
+- **Backend auto-reload:** `--reload` flag watches for file changes.
+- **Database location:** `backend/data/app.db` (relative to where uvicorn runs).
+- **Output files:** `backend/data/summaries/` and `backend/data/extractions/`.
+- **API key security:** Keys live in `backend/.env` — never sent to the Next.js frontend.
+- **Deduplication:** SHA-256 hash prevents re-processing the same file.
+- **Bayesian optimization:** Input/output variable separation is designed for BO workflows.
 
 ---
 
 ## License
 
-MIT — See LICENSE file.
+MIT
