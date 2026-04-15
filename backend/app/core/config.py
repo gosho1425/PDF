@@ -8,6 +8,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import quote_plus  # safe encoding for passwords with special chars
 
 from pydantic import AnyHttpUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -47,15 +48,21 @@ class Settings(BaseSettings):
 
     @property
     def DATABASE_URL(self) -> str:
+        # quote_plus encodes special characters (@ # % : / ? etc.) so that
+        # a password like "P@ss#word!" is not misinterpreted as URL delimiters.
+        user = quote_plus(self.POSTGRES_USER)
+        password = quote_plus(self.POSTGRES_PASSWORD)
         return (
-            f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"postgresql+psycopg2://{user}:{password}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 
     @property
     def ASYNC_DATABASE_URL(self) -> str:
+        user = quote_plus(self.POSTGRES_USER)
+        password = quote_plus(self.POSTGRES_PASSWORD)
         return (
-            f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"postgresql+asyncpg://{user}:{password}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 

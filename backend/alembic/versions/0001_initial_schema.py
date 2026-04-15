@@ -18,10 +18,43 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # ── Enums ──────────────────────────────────────────────────────────────────
-    op.execute("CREATE TYPE paper_status AS ENUM ('uploaded','parsing','parsed','extracting','extracted','review_needed','failed')")
-    op.execute("CREATE TYPE extraction_status AS ENUM ('pending','complete','partial','failed','needs_review')")
-    op.execute("CREATE TYPE job_status AS ENUM ('queued','running','success','failed','retrying','cancelled')")
-    op.execute("CREATE TYPE job_type AS ENUM ('parse_pdf','extract_llm','generate_outputs','full_pipeline','folder_scan')")
+    # Use DO $$ ... $$ blocks so Postgres skips creation when the type already
+    # exists (e.g. partial previous run, stale volume from a prior install).
+    # This makes the migration fully idempotent and safe to re-run.
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE paper_status AS ENUM (
+                'uploaded','parsing','parsed','extracting',
+                'extracted','review_needed','failed'
+            );
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+    """)
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE extraction_status AS ENUM (
+                'pending','complete','partial','failed','needs_review'
+            );
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+    """)
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE job_status AS ENUM (
+                'queued','running','success','failed','retrying','cancelled'
+            );
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+    """)
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE job_type AS ENUM (
+                'parse_pdf','extract_llm','generate_outputs',
+                'full_pipeline','folder_scan'
+            );
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+    """)
 
     # ── Journals ───────────────────────────────────────────────────────────────
     op.create_table(

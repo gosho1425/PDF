@@ -447,7 +447,13 @@ docker compose down -v
 
 #### ❌ `pdf-db-1` fails / `pdf-migrate-1` exits with code 1
 
-This is the **most common startup failure on Windows**. There are three causes — work through them in order:
+This is the **most common startup failure on Windows**. There are four causes — work through them in order:
+
+**First: check the logs to see the real error message**
+```cmd
+docker compose logs db
+docker compose logs migrate
+```
 
 **Cause 1 (most common): `POSTGRES_PASSWORD` is empty or still the placeholder**
 
@@ -462,12 +468,15 @@ PostgreSQL 15 refuses to start if the password is blank or contains `CHANGE_ME`.
    docker compose up -d
    ```
 
-Check the actual error with:
-```cmd
-docker compose logs db
+**Cause 2: Password contains special characters (`@`, `#`, `/`, `%`, `?`, `:`)**
+
+Passwords containing these characters can break the database connection URL even when the password is otherwise correct. The app now URL-encodes the password automatically, but if you see errors like `password authentication failed` despite the correct password being set, try a simpler password without special characters:
+
+```
+POSTGRES_PASSWORD=PaperLens2024simple
 ```
 
-**Cause 2: Stale volume from a previous run with a different password**
+**Cause 3: Stale volume from a previous run with a different password**
 
 If you already ran `docker compose up -d` once (even briefly) with one password, then changed the password in `.env`, PostgreSQL will reject the new password because the volume still holds the database initialised with the old one.
 
@@ -477,12 +486,32 @@ docker compose down -v
 docker compose up -d
 ```
 
-**Cause 3: Docker Desktop / WSL 2 not ready yet**
+**Cause 4: Partial migration left broken state (enum type already exists)**
+
+If a previous migration run crashed halfway (e.g. due to password/network issue), the PostgreSQL ENUM types may have been created but the migration was not recorded. On the next run, `alembic upgrade head` would fail with `ERROR: type "paper_status" already exists`.
+
+The migration is now fully idempotent — it uses `DO $$ ... EXCEPTION WHEN duplicate_object` blocks that skip ENUM creation if the type already exists. If you are on an older version of the code, a clean reset fixes it:
+```cmd
+docker compose down -v
+docker compose up -d
+```
+
+**Cause 5: Docker Desktop / WSL 2 not ready yet**
 
 On a freshly rebooted Windows machine, Docker Desktop can take 30–60 seconds after the icon appears before it's fully ready. Wait until the whale icon in the system tray stops animating, then retry:
 ```cmd
 docker compose up -d
 ```
+
+**Still failing? Get a detailed diagnosis:**
+```cmd
+docker compose logs --tail=50 migrate
+```
+Look for lines like:
+- `[wait_for_db] Attempt X/30 failed` → Postgres is slow to start; wait a moment and retry
+- `type "paper_status" already exists` → You need `docker compose down -v && docker compose up -d`
+- `password authentication failed` → Check `POSTGRES_PASSWORD` in `.env`
+- `could not connect to server` → Check Docker Desktop is running and `POSTGRES_HOST=db`
 
 ---
 

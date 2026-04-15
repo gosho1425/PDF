@@ -76,23 +76,19 @@ services:
       start_period: 5s
 
   # ── Database Migration (runs once on startup) ───────────────────────────────
-  # Uses a retry loop so transient connection blips don't fail the migration.
+  # alembic/env.py already contains a wait_for_db() loop (up to 30 × 2 s = 60 s)
+  # that blocks until Postgres accepts real queries (not just a TCP ping).
+  # The migration DDL is idempotent: ENUM types use DO/EXCEPTION blocks so
+  # re-runs after a partial failure succeed without "type already exists" errors.
   migrate:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    # Retry loop: attempt alembic up to 5 times with a 5-second pause between
-    # attempts. This handles the case where the DB accepts the healthcheck ping
-    # but the auth system isn't ready yet (common on first-boot Windows).
     command: >
       sh -c "
-        echo 'Waiting for database to be fully ready...' &&
-        for i in 1 2 3 4 5; do
-          alembic upgrade head && echo 'Migrations complete' && exit 0;
-          echo \"Migration attempt $$i failed, retrying in 5s...\";
-          sleep 5;
-        done;
-        echo 'ERROR: All migration attempts failed.' && exit 1
+        echo '=== PaperLens: running Alembic migrations ===' &&
+        alembic upgrade head &&
+        echo '=== Migrations complete ==='
       "
     environment:
       POSTGRES_HOST: db
@@ -100,6 +96,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-paperlens}
       POSTGRES_USER: ${POSTGRES_USER:-paperlens}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?❌ POSTGRES_PASSWORD is not set. Copy .env.example to .env and fill in POSTGRES_PASSWORD.}
+      # Expose log level so migration output is visible in docker compose logs
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ANTHROPIC_API_KEY: ""
     depends_on:
       db:
         condition: service_healthy
