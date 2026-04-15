@@ -42,51 +42,129 @@ def get_ingest_status():
     Return the configured ingestion folder path and whether it is accessible
     inside the container. Used by the UI to show mount health.
 
-    Returns extra diagnostic fields when not mounted so the UI can give
-    the user a precise, actionable error message.
+    Performs a real filesystem read (os.listdir) — not just exists() — so that
+    permission errors are caught and reported. Counts PDFs case-insensitively
+    so .PDF and .pdf files are both counted.
+
+    Also returns environment-level diagnostic fields so the UI / developer can
+    see exactly what path the container resolved without needing shell access.
     """
     import os
-    ingest_dir = settings.INGEST_DIR
+
+    # Always re-read from the live settings object (not a stale module-level var).
+    # get_settings() is lru_cached so this is effectively free after first call.
+    cfg = get_settings()
+    ingest_dir = cfg.INGEST_DIR
+
+    # Raw environment variable — useful to distinguish "env var not set" vs
+    # "env var set but path is wrong on host".
+    ingest_dir_env_raw: Optional[str] = os.environ.get("INGEST_DIR")
+
+    log.info(
+        "ingest-status check",
+        ingest_dir=str(ingest_dir),
+        ingest_dir_env_raw=ingest_dir_env_raw,
+    )
+
     mount_error: Optional[str] = None
     pdf_count: Optional[int] = None
-
-    # Three-level check: path exists → is directory → is readable
     folder_exists = False
+    # True when /ingest appears to be the empty fallback (no real host mount)
+    is_fallback_mount = False
+
     try:
-        if not ingest_dir.exists():
+        exists = ingest_dir.exists()
+        is_dir = ingest_dir.is_dir() if exists else False
+        log.info(
+            "ingest-status fs probe",
+            path=str(ingest_dir),
+            exists=exists,
+            is_dir=is_dir,
+        )
+
+        if not exists:
             mount_error = (
                 f"Path '{ingest_dir}' does not exist inside the container. "
-                "The Docker volume mount is missing or incorrect."
+                "The Docker volume mount is missing or the path is wrong."
             )
-        elif not ingest_dir.is_dir():
+        elif not is_dir:
             mount_error = f"'{ingest_dir}' exists but is not a directory."
         else:
-            # Try a real read to catch permission errors
-            os.listdir(ingest_dir)
+            # Perform a real directory read — exists()/is_dir() can succeed on
+            # a mount point even when the underlying volume isn't actually readable.
+            entries = os.listdir(ingest_dir)
+            log.info(
+                "ingest-status listdir ok",
+                path=str(ingest_dir),
+                entry_count=len(entries),
+            )
             folder_exists = True
+
+            # Count PDFs case-insensitively (handles .PDF, .Pdf on Windows-sourced folders)
             try:
-                pdf_count = sum(1 for _ in ingest_dir.rglob("*.pdf"))
-            except Exception:
+                count = 0
+                for root, _dirs, files in os.walk(ingest_dir):
+                    for fname in files:
+                        if fname.lower().endswith(".pdf"):
+                            count += 1
+                pdf_count = count
+                log.info(
+                    "ingest-status pdf count",
+                    path=str(ingest_dir),
+                    pdf_count=pdf_count,
+                )
+            except Exception as count_exc:
+                log.warning("ingest-status pdf count failed", error=str(count_exc))
                 pdf_count = None
+
+            # Detect if this is the fallback empty mount (./data/ingest inside
+            # the repo — meaning HOST_PAPER_DIR was not set in .env).
+            # Heuristic: folder is empty and contains only .gitkeep
+            non_gitkeep = [e for e in entries if e != ".gitkeep"]
+            if pdf_count == 0 and len(non_gitkeep) == 0:
+                is_fallback_mount = True
+                log.info(
+                    "ingest-status: looks like fallback empty mount (no PDFs, only .gitkeep)",
+                    path=str(ingest_dir),
+                )
+
     except PermissionError as exc:
         mount_error = f"Permission denied reading '{ingest_dir}': {exc}"
+        log.warning("ingest-status permission error", error=str(exc))
     except OSError as exc:
         mount_error = f"OS error checking '{ingest_dir}': {exc}"
+        log.warning("ingest-status os error", error=str(exc))
     except Exception as exc:
         mount_error = f"Unexpected error: {exc}"
+        log.error("ingest-status unexpected error", error=str(exc), exc_info=True)
 
     hint: Optional[str] = None
     if not folder_exists:
         hint = (
-            f"The container path '{ingest_dir}' is not accessible. "
-            "Common causes on Windows:\n"
-            "1. HOST_PAPER_DIR in .env has an inline comment or trailing space — "
-            "remove everything after the path on that line.\n"
-            "2. COMPOSE_CONVERT_WINDOWS_PATHS=1 is missing from .env.\n"
-            "3. You did not run 'docker compose down && docker compose up -d' "
-            "after editing .env.\n"
-            "4. The folder does not exist on your host — create it first."
+            f"Container path '{ingest_dir}' is not accessible. "
+            "Steps to fix:\n"
+            "1. Set HOST_PAPER_DIR in .env to your PDF folder (no # comments or trailing spaces).\n"
+            "2. On Windows, add COMPOSE_CONVERT_WINDOWS_PATHS=1 to .env.\n"
+            "3. Make sure the host folder actually exists (create it if needed).\n"
+            "4. Run: docker compose down && docker compose up -d\n"
+            "5. Then click Refresh in the UI."
         )
+    elif is_fallback_mount:
+        hint = (
+            "The folder is mounted but appears to be the empty fallback directory "
+            "(data/ingest inside the project). "
+            "To use your own PDF folder, set HOST_PAPER_DIR in .env to your PDF folder path "
+            "and restart: docker compose down && docker compose up -d"
+        )
+
+    log.info(
+        "ingest-status result",
+        ingest_dir=str(ingest_dir),
+        mounted=folder_exists,
+        is_fallback_mount=is_fallback_mount,
+        pdf_count=pdf_count,
+        mount_error=mount_error,
+    )
 
     return {
         "ingest_dir": str(ingest_dir),
@@ -94,6 +172,9 @@ def get_ingest_status():
         "pdf_count_in_folder": pdf_count,
         "mount_error": mount_error,
         "hint": hint,
+        # Diagnostic fields — help users confirm the right env vars are loaded
+        "ingest_dir_from_env": ingest_dir_env_raw or "(not set — using default /ingest)",
+        "is_fallback_mount": is_fallback_mount,
     }
 
 
