@@ -1,10 +1,10 @@
-import { AppShell } from '@/components/layout/AppShell';
-import { UploadPageContent } from './UploadPageContent';
+/**
+ * The manual upload workflow has been removed.
+ * PaperLens now uses folder-based ingestion only.
+ * This page redirects to /ingest for backward compatibility.
+ */
+import { redirect } from 'next/navigation';
 
 export default function UploadPage() {
-  return (
-    <AppShell>
-      <UploadPageContent />
-    </AppShell>
-  );
+  redirect('/ingest');
 }

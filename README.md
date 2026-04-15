@@ -2,7 +2,7 @@
 
 **Scientific Paper Extraction & Structured Research Data Management**
 
-PaperLens lets you upload research PDF papers, automatically extracts structured scientific data using Claude AI, and stores everything in a searchable database — ready for analysis and Bayesian optimization of experimental conditions.
+PaperLens ingests research PDF papers from a **configured host folder** (no browser upload), automatically extracts structured scientific data using Claude AI, and stores everything in a searchable database — ready for analysis and Bayesian optimization of experimental conditions.
 
 ---
 
@@ -33,11 +33,16 @@ Copy-Item .env.example .env
 Or just right-click `.env.example` in File Explorer → **Copy** → **Paste** → rename the copy to `.env`.
 
 **Step 4 — Edit `.env`**
-Open `.env` in Notepad (or any text editor). Find these two lines and fill them in:
+Open `.env` in Notepad (or any text editor). Find and fill in **three required lines**:
 ```
 POSTGRES_PASSWORD=CHANGE_ME_STRONG_PASSWORD
 ANTHROPIC_API_KEY=sk-ant-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+HOST_PAPER_DIR=C:\Users\YourName\Documents\papers
 ```
+- `POSTGRES_PASSWORD` — any strong password (no spaces)
+- `ANTHROPIC_API_KEY` — your key from https://console.anthropic.com/
+- `HOST_PAPER_DIR` — the Windows folder that contains your PDFs (use backslashes or forward slashes; Docker Desktop handles both)
+
 Save the file.
 
 **Step 5 — Start the app**
@@ -57,6 +62,52 @@ docker compose down
 ```
 
 > **No separate Node.js install needed.** The `package-lock.json` file is already committed in this repo, so Docker can install all frontend dependencies exactly and reproducibly without you needing Node.js on your machine.
+
+---
+
+## Folder-based Ingestion — Windows Quick Reference
+
+PaperLens **does not use browser upload**. PDFs are ingested by mounting a host folder into Docker.
+
+### What you add to `.env`
+
+```env
+# Path to the folder on YOUR machine that contains the PDF files
+HOST_PAPER_DIR=C:\Users\Alice\Documents\papers
+
+# Container-side mount point (leave as /ingest unless you have a reason to change)
+INGEST_DIR=/ingest
+```
+
+### How Docker Compose mounts it
+
+`docker-compose.yml` already contains:
+```yaml
+volumes:
+  - ${HOST_PAPER_DIR:-./data/ingest}:/ingest:ro   # read-only
+```
+The `:ro` flag means the container can read but never modify your host files.
+
+### Supported path formats on Windows
+
+Docker Desktop (with WSL 2) accepts all of these in `.env`:
+
+| Format | Works? |
+|--------|--------|
+| `C:\Users\Alice\papers` | ✅ Yes (backslashes) |
+| `C:/Users/Alice/papers` | ✅ Yes (forward slashes) |
+| `//c/Users/Alice/papers` | ✅ Yes (Git Bash style) |
+
+> **Tip:** Avoid paths with spaces. If you must use them, wrap the value in double quotes in `.env`:
+> `HOST_PAPER_DIR="C:\My Documents\papers"`
+
+### Adding more PDFs later
+
+Just drop new `.pdf` files into the host folder and click **Scan Now** in the UI — or send:
+```
+POST http://localhost:8000/api/v1/papers/scan
+```
+Already-processed files are detected by SHA-256 and never re-ingested.
 
 ---
 
@@ -275,15 +326,20 @@ Open `.env` in any text editor:
 
 **Linux:** `nano .env` or `gedit .env`
 
-Find and fill in these **two required lines**:
+Find and fill in these **three required lines**:
 
 ```
 POSTGRES_PASSWORD=CHANGE_ME_STRONG_PASSWORD
 ANTHROPIC_API_KEY=sk-ant-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+HOST_PAPER_DIR=C:\Users\YourName\Documents\papers
 ```
 
 - Replace `CHANGE_ME_STRONG_PASSWORD` with any strong password (no spaces). Example: `PaperLens2024!`
 - Replace `sk-ant-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` with your real Anthropic API key
+- Replace `C:\Users\YourName\Documents\papers` with the actual path to your PDF folder
+
+**Windows users:** use backslashes (`\`) or forward slashes (`/`) — Docker Desktop handles both.
+**macOS / Linux users:** use a normal Unix path, e.g. `/home/alice/papers`.
 
 Everything else can stay as-is for a first run.
 
@@ -347,7 +403,8 @@ Once all containers are running, open your browser:
 
 | Service | URL | What it is |
 |---------|-----|------------|
-| **App (frontend)** | http://localhost:3000 | Main UI — upload papers here |
+| **App (frontend)** | http://localhost:3000 | Main UI — ingest & review papers |
+| **Ingest page** | http://localhost:3000/ingest | Scan folder, view stats & logs |
 | **API docs** | http://localhost:8000/api/docs | Interactive API reference |
 | **Task monitor** | http://localhost:5555 | Watch background jobs run |
 
@@ -401,18 +458,41 @@ If you see this error after pulling an update, the lockfile may have been regene
 **Port already in use**
 If port 3000 or 8000 is already used by another app, edit `.env` and change `FRONTEND_PORT` or `API_PORT` to a different number, then restart.
 
-**App opens but shows errors after uploading a PDF**
+**Ingestion folder shows "Not mounted"**
+Check that `HOST_PAPER_DIR` is set in `.env` and points to a real folder on your machine, then restart:
+```
+docker compose down && docker compose up -d
+```
+
+**App opens but shows errors after scanning**
 Check that `ANTHROPIC_API_KEY` in `.env` is correct and that your Anthropic account has available credits.
 
 ---
 
 ## Using the App
 
-### 1. Upload Papers
+### 0. Folder-based Ingestion (New Workflow)
 
-- Go to **Upload** tab at http://localhost:3000
-- Drag & drop one or multiple PDF files, or click to browse
-- Each paper gets a unique ID and enters the processing queue
+PaperLens no longer uses browser-based file upload. Instead:
+
+1. Place your PDF files in the folder you set as `HOST_PAPER_DIR` in `.env`
+2. Open http://localhost:3000/ingest in your browser
+3. Check the **Ingestion Folder** card — it shows whether the folder is mounted and how many PDFs are inside
+4. Click **Scan Now** to queue all new PDFs for processing
+   - Already-ingested files are detected by **SHA-256 hash** and silently skipped
+   - The scan log shows: found / ingested / skipped / failed counts
+5. You can also trigger a scan programmatically:
+   ```
+   POST http://localhost:8000/api/v1/papers/scan
+   ```
+
+> **Windows path example:** If your PDFs are in `C:\Users\Alice\Documents\papers`, set `HOST_PAPER_DIR=C:\Users\Alice\Documents\papers` in `.env`. Docker Desktop on Windows converts the path automatically — no WSL path conversion needed.
+
+### 1. Scan for Papers
+
+- Go to **Ingest** tab at http://localhost:3000/ingest
+- Verify the folder is mounted (green ✓ badge)
+- Click **Scan Now** — each PDF is queued with a unique ID
 
 ### 2. Monitor Processing
 

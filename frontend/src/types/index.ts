@@ -160,13 +160,31 @@ export interface PaperListResponse {
   limit: number;
 }
 
-export interface UploadResult {
-  filename: string;
-  paper_id?: string;
-  task_id?: string;
-  status: 'queued' | 'failed' | 'rejected' | 'uploaded';
-  error?: string;
-  message?: string;
+/** Result returned by POST /papers/scan */
+export interface ScanResult {
+  task_id: string;
+  status: string;
+  ingest_dir: string;
+  message: string;
+}
+
+/** Result returned by GET /papers/ingest-status */
+export interface IngestStatus {
+  ingest_dir: string;
+  mounted: boolean;
+  pdf_count_in_folder: number | null;
+  hint: string | null;
+}
+
+/** Result returned by GET /jobs/{taskId}/celery-status after a scan */
+export interface ScanSummary {
+  folder: string;
+  found: number;
+  skipped_duplicates: number;
+  ingested: number;
+  failed: number;
+  errors: string[];
+  task_ids: string[];
 }
 
 export interface ExportRequest {

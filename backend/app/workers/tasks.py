@@ -280,40 +280,121 @@ def run_full_pipeline(self, paper_id: str, job_id: Optional[str] = None) -> dict
     name="app.workers.tasks.scan_folder",
     max_retries=1,
 )
-def scan_folder(self, folder_path: str, job_id: Optional[str] = None) -> dict:
+def scan_folder(self, job_id: Optional[str] = None) -> dict:
     """
-    Scan a local folder for PDF files and queue them for processing.
-    """
-    folder = Path(folder_path)
-    if not folder.exists() or not folder.is_dir():
-        raise ValueError(f"Folder does not exist: {folder_path}")
+    Scan the configured INGEST_DIR for PDF files and queue new ones for processing.
 
-    pdf_files = list(folder.glob("*.pdf")) + list(folder.glob("**/*.pdf"))
-    logger.info(f"Found {len(pdf_files)} PDFs in {folder_path}")
+    Deduplication strategy:
+      1. Compute SHA-256 of each PDF found in INGEST_DIR.
+      2. If a Paper row with the same hash already exists → skip (log it).
+      3. Otherwise copy the file to managed storage and queue the full pipeline.
+
+    Returns a summary dict with keys:
+      found, skipped_duplicates, ingested, failed, errors, task_ids
+    """
+    import hashlib
+
+    folder = settings.INGEST_DIR
+    if not folder.exists():
+        raise ValueError(
+            f"Ingestion folder '{folder}' does not exist. "
+            "Check that HOST_PAPER_DIR is correctly mapped in docker-compose.yml "
+            "and the volume is mounted."
+        )
+    if not folder.is_dir():
+        raise ValueError(f"INGEST_DIR '{folder}' is not a directory.")
+
+    # Collect all PDFs recursively (deduplicate paths via set)
+    pdf_files = sorted(set(folder.rglob("*.pdf")))
+    total_found = len(pdf_files)
+    logger.info(f"[scan_folder] Ingestion folder: {folder}")
+    logger.info(f"[scan_folder] Found {total_found} PDF file(s) to evaluate")
 
     db = _get_db_session()
-    queued = []
+    ingested: list[str] = []
+    skipped: list[str] = []
+    failed: list[str] = []
+    errors: list[str] = []
+
     try:
+        from sqlalchemy import select
+        from app.models.paper import Paper as PaperModel
+
         storage = get_storage()
         service = PaperService(db)
 
         for pdf_file in pdf_files:
-            new_paper_id = uuid.uuid4()
-            dest_path, sha256, size = storage.copy_from_folder(pdf_file, new_paper_id)
-            rel_path = storage.relative_path(dest_path)
+            filename = pdf_file.name
+            try:
+                # --- Compute hash BEFORE copying so we can deduplicate cheaply ---
+                hasher = hashlib.sha256()
+                with open(pdf_file, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        hasher.update(chunk)
+                sha256 = hasher.hexdigest()
 
-            paper = service.create_paper(
-                original_filename=pdf_file.name,
-                file_path=rel_path,
-                file_hash=sha256,
-                file_size=size,
-            )
-            db.commit()
+                # --- Deduplication check ---
+                existing = db.execute(
+                    select(PaperModel).where(PaperModel.file_hash_sha256 == sha256)
+                ).scalar_one_or_none()
 
-            # Queue pipeline
-            run_full_pipeline.delay(str(paper.id))
-            queued.append(str(paper.id))
+                if existing is not None:
+                    logger.info(
+                        f"[scan_folder] SKIP (duplicate) {filename} "
+                        f"→ existing paper {existing.id} "
+                        f"(status={existing.status.value})"
+                    )
+                    skipped.append(filename)
+                    continue
 
-        return {"queued": queued, "total": len(queued)}
+                # --- Copy to managed storage ---
+                new_paper_id = uuid.uuid4()
+                dest_path, confirmed_sha256, size = storage.copy_from_folder(
+                    pdf_file, new_paper_id
+                )
+                rel_path = storage.relative_path(dest_path)
+
+                # --- Create DB record ---
+                paper = service.create_paper(
+                    original_filename=filename,
+                    file_path=rel_path,
+                    file_hash=confirmed_sha256,
+                    file_size=size,
+                )
+                db.commit()
+
+                # --- Queue full pipeline ---
+                task = run_full_pipeline.delay(str(paper.id))
+                ingested.append(str(paper.id))
+                logger.info(
+                    f"[scan_folder] INGESTED {filename} "
+                    f"→ paper_id={paper.id} task_id={task.id}"
+                )
+
+            except Exception as exc:
+                db.rollback()
+                error_msg = f"{filename}: {exc}"
+                failed.append(filename)
+                errors.append(error_msg)
+                logger.error(f"[scan_folder] FAILED {error_msg}")
+
+        summary = {
+            "folder": str(folder),
+            "found": total_found,
+            "skipped_duplicates": len(skipped),
+            "ingested": len(ingested),
+            "failed": len(failed),
+            "errors": errors,
+            "task_ids": ingested,
+        }
+        logger.info(
+            f"[scan_folder] Complete — "
+            f"found={total_found} "
+            f"skipped={len(skipped)} "
+            f"ingested={len(ingested)} "
+            f"failed={len(failed)}"
+        )
+        return summary
+
     finally:
         db.close()

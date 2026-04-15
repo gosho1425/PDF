@@ -1,16 +1,21 @@
 """
 Paper management API endpoints.
+
+Ingestion model: folder-scan only.
+  POST /papers/scan          – trigger async scan of the configured INGEST_DIR
+  GET  /papers/ingest-status – current folder mount status + last scan result
+
 All LLM calls are triggered asynchronously via Celery tasks.
 The frontend NEVER directly calls Claude or any LLM service.
 """
 from __future__ import annotations
 
 import uuid
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import (
-    APIRouter, BackgroundTasks, Depends, File, HTTPException,
-    Query, UploadFile, status,
+    APIRouter, Depends, HTTPException,
+    Query, status,
 )
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +24,7 @@ from app.api.dependencies import get_db
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.models.paper import Paper, PaperStatus
-from app.schemas.paper import PaperCreate, PaperListItem, PaperRead, PaperUpdate
+from app.schemas.paper import PaperUpdate
 from app.services.paper_service import PaperService
 from app.services.storage import get_storage
 from app.workers.tasks import run_full_pipeline, scan_folder
@@ -28,132 +33,74 @@ router = APIRouter()
 log = get_logger(__name__)
 settings = get_settings()
 
-MAX_UPLOAD_BYTES = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
+# ── Ingestion ──────────────────────────────────────────────────────────────────
 
-@router.post("/upload", response_model=List[dict], status_code=status.HTTP_202_ACCEPTED)
-async def upload_papers(
-    files: List[UploadFile] = File(...),
-    db: AsyncSession = Depends(get_db),
-):
+@router.get("/ingest-status")
+def get_ingest_status():
     """
-    Upload one or many PDF files.
-    Triggers async pipeline (parse + extract) for each file.
-    Returns list of paper IDs and initial status.
+    Return the configured ingestion folder path and whether it is accessible
+    inside the container. Used by the UI to show mount health.
     """
-    if not files:
-        raise HTTPException(status_code=400, detail="No files provided")
-
-    storage = get_storage()
-    results = []
-
-    # Use sync DB session for file processing (Celery needs sync anyway)
-    from app.db.base import get_sync_session_factory
-    SyncSession = get_sync_session_factory()
-
-    for upload in files:
-        # Validate
-        if not upload.filename:
-            continue
-        if not upload.filename.lower().endswith(".pdf"):
-            results.append({
-                "filename": upload.filename,
-                "error": "Only PDF files are accepted",
-                "status": "rejected",
-            })
-            continue
-
-        # Size check
-        content = await upload.read(MAX_UPLOAD_BYTES + 1)
-        if len(content) > MAX_UPLOAD_BYTES:
-            results.append({
-                "filename": upload.filename,
-                "error": f"File exceeds {settings.MAX_UPLOAD_SIZE_MB} MB limit",
-                "status": "rejected",
-            })
-            continue
-
-        # Save to storage
-        paper_id = uuid.uuid4()
+    ingest_dir = settings.INGEST_DIR
+    folder_exists = ingest_dir.exists() and ingest_dir.is_dir()
+    pdf_count: Optional[int] = None
+    if folder_exists:
         try:
-            import io
-            content_io = io.BytesIO(content)
+            pdf_count = sum(1 for _ in ingest_dir.rglob("*.pdf"))
+        except Exception:
+            pdf_count = None
 
-            # Compute hash
-            import hashlib
-            sha256 = hashlib.sha256(content).hexdigest()
-            dest = storage.original_pdf_path(paper_id)
-            dest.write_bytes(content)
-            rel_path = storage.relative_path(dest)
-
-            # Register in DB (sync)
-            with SyncSession() as sync_db:
-                service = PaperService(sync_db)
-                # Check duplicate
-                from sqlalchemy import select
-                from app.models.paper import Paper as PaperModel
-                existing = sync_db.execute(
-                    select(PaperModel).where(PaperModel.file_hash_sha256 == sha256)
-                ).scalar_one_or_none()
-
-                if existing:
-                    results.append({
-                        "filename": upload.filename,
-                        "paper_id": str(existing.id),
-                        "status": existing.status.value,
-                        "message": "Duplicate file detected – using existing record",
-                    })
-                    continue
-
-                paper = service.create_paper(
-                    original_filename=upload.filename,
-                    file_path=rel_path,
-                    file_hash=sha256,
-                    file_size=len(content),
-                )
-                sync_db.commit()
-                paper_id = paper.id
-
-            # Queue pipeline
-            task = run_full_pipeline.delay(str(paper_id))
-            log.info("Pipeline queued", paper_id=str(paper_id), task_id=task.id)
-
-            results.append({
-                "filename": upload.filename,
-                "paper_id": str(paper_id),
-                "task_id": task.id,
-                "status": "queued",
-            })
-
-        except Exception as exc:
-            log.error("Upload failed", filename=upload.filename, error=str(exc))
-            results.append({
-                "filename": upload.filename,
-                "error": str(exc),
-                "status": "failed",
-            })
-
-    return results
+    return {
+        "ingest_dir": str(ingest_dir),
+        "mounted": folder_exists,
+        "pdf_count_in_folder": pdf_count,
+        "hint": (
+            None if folder_exists
+            else (
+                f"Folder '{ingest_dir}' is not mounted. "
+                "Set HOST_PAPER_DIR in your .env and restart Docker Compose. "
+                "See README – 'Windows Quick Start' for instructions."
+            )
+        ),
+    }
 
 
-@router.post("/scan-folder", status_code=status.HTTP_202_ACCEPTED)
-async def scan_local_folder(
-    folder_path: str = Query(..., description="Absolute path to local folder containing PDFs"),
-):
+@router.post("/scan", status_code=status.HTTP_202_ACCEPTED)
+def trigger_scan():
     """
-    Scan a configured local folder for PDF files and queue them all for processing.
-    The folder must exist on the server filesystem.
+    Trigger an asynchronous scan of the configured INGEST_DIR.
+    The Celery worker will:
+      1. Recursively find all *.pdf files.
+      2. Compute SHA-256 for each; skip duplicates already in the database.
+      3. Copy new PDFs to managed storage, create Paper records, queue parse→extract.
+    Returns a task_id that can be polled via GET /jobs/{task_id}/celery-status.
     """
-    from pathlib import Path
-    folder = Path(folder_path)
-    if not folder.exists():
-        raise HTTPException(status_code=400, detail=f"Folder not found: {folder_path}")
-    if not folder.is_dir():
-        raise HTTPException(status_code=400, detail=f"Path is not a directory: {folder_path}")
+    ingest_dir = settings.INGEST_DIR
+    if not ingest_dir.exists() or not ingest_dir.is_dir():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Ingestion folder '{ingest_dir}' is not accessible inside the container. "
+                "Mount your host PDF folder as a Docker volume. "
+                "See README – 'Folder-based Ingestion' for Windows/macOS/Linux instructions."
+            ),
+        )
 
-    task = scan_folder.delay(str(folder))
-    return {"task_id": task.id, "status": "scanning", "folder": str(folder)}
+    task = scan_folder.delay()
+    log.info("Folder scan triggered", ingest_dir=str(ingest_dir), task_id=task.id)
+    return {
+        "task_id": task.id,
+        "status": "scanning",
+        "ingest_dir": str(ingest_dir),
+        "message": (
+            "Scan started. Poll GET /api/v1/jobs/{task_id}/celery-status for progress. "
+            "Duplicate PDFs (matched by SHA-256) will be skipped automatically."
+        ),
+    }
 
+
+# ── Papers list & detail ───────────────────────────────────────────────────────
 
 @router.get("", response_model=dict)
 async def list_papers(
@@ -184,7 +131,6 @@ async def list_papers(
 
         items = []
         for p in papers:
-            # Build lightweight list item
             author_names = [pa.author.full_name for pa in (p.paper_authors or [])]
             has_extraction = bool(p.extraction_records)
             needs_review = any(

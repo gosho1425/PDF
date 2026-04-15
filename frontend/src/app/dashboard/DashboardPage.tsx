@@ -1,10 +1,10 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { papersApi } from '@/lib/api';
+import { papersApi, ingestApi } from '@/lib/api';
 import {
   BookOpen, CheckCircle, AlertTriangle, XCircle,
-  Upload, ArrowRight, Clock,
+  FolderInput, ArrowRight, Clock, FolderOpen,
 } from 'lucide-react';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
@@ -16,6 +16,12 @@ export function DashboardPage() {
     queryKey: ['papers-summary'],
     queryFn: () => papersApi.list({ limit: 200 }),
     refetchInterval: 5000, // poll for pipeline updates
+  });
+
+  const { data: ingestStatus } = useQuery({
+    queryKey: ['ingest-status'],
+    queryFn: ingestApi.getStatus,
+    refetchInterval: 30_000,
   });
 
   const papers = data?.items ?? [];
@@ -97,40 +103,75 @@ export function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-3 gap-6">
-        {/* In Progress */}
-        <div className="col-span-1 card p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <Clock className="w-4 h-4 text-purple-500" />
-            <h3 className="font-medium text-gray-700">Processing</h3>
-            {inProgress.length > 0 && (
-              <span className="badge bg-purple-100 text-purple-700 border-purple-200 ml-auto">
-                {inProgress.length} active
-              </span>
-            )}
-          </div>
-          {inProgress.length === 0 ? (
-            <p className="text-xs text-gray-400">No papers currently processing</p>
-          ) : (
-            <div className="space-y-2">
-              {inProgress.map((p) => (
-                <div key={p.id} className="flex items-center gap-2">
-                  <StatusBadge status={p.status} />
-                  <span className="text-xs text-gray-600 truncate flex-1">
-                    {p.title || p.original_filename}
-                  </span>
-                </div>
-              ))}
+        {/* In Progress + Folder status */}
+        <div className="col-span-1 space-y-4">
+          {/* Ingestion folder */}
+          <div className="card p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <FolderOpen className="w-4 h-4 text-gray-400" />
+              <h3 className="font-medium text-gray-700 text-sm">Ingestion Folder</h3>
             </div>
-          )}
+            {ingestStatus ? (
+              <>
+                <p className="text-xs font-mono text-gray-500 truncate mb-1">
+                  {ingestStatus.ingest_dir}
+                </p>
+                <div className="flex items-center gap-1.5">
+                  {ingestStatus.mounted ? (
+                    <span className="badge bg-green-100 text-green-700 border-green-200 text-xs">
+                      ✓ Mounted
+                    </span>
+                  ) : (
+                    <span className="badge bg-amber-100 text-amber-700 border-amber-200 text-xs">
+                      ⚠ Not mounted
+                    </span>
+                  )}
+                  {ingestStatus.pdf_count_in_folder !== null && (
+                    <span className="text-xs text-gray-500">
+                      {ingestStatus.pdf_count_in_folder} PDF{ingestStatus.pdf_count_in_folder !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-gray-400">Loading…</p>
+            )}
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <Link
+                href="/ingest"
+                className="flex items-center gap-2 text-sm text-brand-600 hover:text-brand-700"
+              >
+                <FolderInput className="w-4 h-4" />
+                Scan for new PDFs
+              </Link>
+            </div>
+          </div>
 
-          <div className="mt-4 pt-4 border-t border-gray-100">
-            <Link
-              href="/upload"
-              className="flex items-center gap-2 text-sm text-brand-600 hover:text-brand-700"
-            >
-              <Upload className="w-4 h-4" />
-              Upload papers
-            </Link>
+          {/* In Progress */}
+          <div className="card p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Clock className="w-4 h-4 text-purple-500" />
+              <h3 className="font-medium text-gray-700">Processing</h3>
+              {inProgress.length > 0 && (
+                <span className="badge bg-purple-100 text-purple-700 border-purple-200 ml-auto">
+                  {inProgress.length} active
+                </span>
+              )}
+            </div>
+            {inProgress.length === 0 ? (
+              <p className="text-xs text-gray-400">No papers currently processing</p>
+            ) : (
+              <div className="space-y-2">
+                {inProgress.map((p) => (
+                  <div key={p.id} className="flex items-center gap-2">
+                    <StatusBadge status={p.status} />
+                    <span className="text-xs text-gray-600 truncate flex-1">
+                      {p.title || p.original_filename}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -146,8 +187,8 @@ export function DashboardPage() {
             {recentPapers.length === 0 ? (
               <div className="p-8 text-center text-sm text-gray-400">
                 No papers yet.{' '}
-                <Link href="/upload" className="text-brand-500 hover:underline">
-                  Upload your first paper →
+                <Link href="/ingest" className="text-brand-500 hover:underline">
+                  Scan your folder to ingest PDFs →
                 </Link>
               </div>
             ) : (
@@ -177,14 +218,15 @@ export function DashboardPage() {
       <div className="mt-6 card p-5">
         <h3 className="font-medium text-gray-700 mb-3">Quick Actions</h3>
         <div className="flex gap-3">
-          <Link href="/upload" className="btn-primary text-sm">
-            Upload PDFs
+          <Link href="/ingest" className="btn-primary text-sm flex items-center gap-1.5">
+            <FolderInput className="w-4 h-4" />
+            Scan for PDFs
           </Link>
           <Link href="/papers" className="btn-secondary text-sm">
             Browse Papers
           </Link>
           <Link href="/table" className="btn-secondary text-sm">
-            Data Table & Export
+            Data Table &amp; Export
           </Link>
         </div>
       </div>

@@ -108,6 +108,15 @@ class Settings(BaseSettings):
     def EXPORTS_DIR(self) -> Path:
         return self.DATA_DIR / "exports"
 
+    # ── Folder-based Ingestion ─────────────────────────────────────────────────
+    # INGEST_DIR is the container-side path where PDFs are mounted read-only.
+    # Set HOST_PAPER_DIR in .env to your Windows/Mac/Linux host folder path and
+    # mount it in docker-compose.yml as:
+    #   volumes:
+    #     - ${HOST_PAPER_DIR}:/ingest:ro
+    # Then set INGEST_DIR=/ingest (the container path, already the default).
+    INGEST_DIR: Path = Path("/ingest")
+
     # ── PDF Processing ─────────────────────────────────────────────────────────
     MAX_UPLOAD_SIZE_MB: int = 100
     ALLOWED_EXTENSIONS: List[str] = [".pdf"]
