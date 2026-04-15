@@ -41,28 +41,59 @@ def get_ingest_status():
     """
     Return the configured ingestion folder path and whether it is accessible
     inside the container. Used by the UI to show mount health.
+
+    Returns extra diagnostic fields when not mounted so the UI can give
+    the user a precise, actionable error message.
     """
+    import os
     ingest_dir = settings.INGEST_DIR
-    folder_exists = ingest_dir.exists() and ingest_dir.is_dir()
+    mount_error: Optional[str] = None
     pdf_count: Optional[int] = None
-    if folder_exists:
-        try:
-            pdf_count = sum(1 for _ in ingest_dir.rglob("*.pdf"))
-        except Exception:
-            pdf_count = None
+
+    # Three-level check: path exists → is directory → is readable
+    folder_exists = False
+    try:
+        if not ingest_dir.exists():
+            mount_error = (
+                f"Path '{ingest_dir}' does not exist inside the container. "
+                "The Docker volume mount is missing or incorrect."
+            )
+        elif not ingest_dir.is_dir():
+            mount_error = f"'{ingest_dir}' exists but is not a directory."
+        else:
+            # Try a real read to catch permission errors
+            os.listdir(ingest_dir)
+            folder_exists = True
+            try:
+                pdf_count = sum(1 for _ in ingest_dir.rglob("*.pdf"))
+            except Exception:
+                pdf_count = None
+    except PermissionError as exc:
+        mount_error = f"Permission denied reading '{ingest_dir}': {exc}"
+    except OSError as exc:
+        mount_error = f"OS error checking '{ingest_dir}': {exc}"
+    except Exception as exc:
+        mount_error = f"Unexpected error: {exc}"
+
+    hint: Optional[str] = None
+    if not folder_exists:
+        hint = (
+            f"The container path '{ingest_dir}' is not accessible. "
+            "Common causes on Windows:\n"
+            "1. HOST_PAPER_DIR in .env has an inline comment or trailing space — "
+            "remove everything after the path on that line.\n"
+            "2. COMPOSE_CONVERT_WINDOWS_PATHS=1 is missing from .env.\n"
+            "3. You did not run 'docker compose down && docker compose up -d' "
+            "after editing .env.\n"
+            "4. The folder does not exist on your host — create it first."
+        )
 
     return {
         "ingest_dir": str(ingest_dir),
         "mounted": folder_exists,
         "pdf_count_in_folder": pdf_count,
-        "hint": (
-            None if folder_exists
-            else (
-                f"Folder '{ingest_dir}' is not mounted. "
-                "Set HOST_PAPER_DIR in your .env and restart Docker Compose. "
-                "See README – 'Windows Quick Start' for instructions."
-            )
-        ),
+        "mount_error": mount_error,
+        "hint": hint,
     }
 
 
