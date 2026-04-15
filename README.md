@@ -596,6 +596,24 @@ docker compose down && docker compose up -d
 
 After restarting, click **Refresh** on the Ingest page — it should show "✓ Mounted" and the PDF count.
 
+**Cause 5 — Use the built-in diagnostics panel**
+
+On the Ingest page, click **Show diagnostics** (small link at the bottom of the Ingestion Folder card). It reveals:
+- The exact `INGEST_DIR` value the container sees
+- The raw `INGEST_DIR` environment variable as loaded in the running container
+- Whether the folder is the fallback empty mount
+- The specific OS-level `mount_error` message
+
+You can also open the raw API response in your browser to see all fields:
+```
+http://localhost:8000/api/v1/papers/ingest-status
+```
+Look at `"mounted"`, `"mount_error"`, `"ingest_dir_from_env"`, and `"is_fallback_mount"` — these tell you exactly what the container can see.
+
+**Cause 6 — "Fallback (empty)" badge instead of "Not mounted"**
+
+If the UI shows **"⚠ Fallback (empty)"** rather than "Not mounted", it means `HOST_PAPER_DIR` was not set in `.env` at all, so Docker Compose used the project's internal `data/ingest/` directory (which is empty). Fix: set `HOST_PAPER_DIR` to your PDF folder path and restart Docker.
+
 **App opens but shows errors after scanning**
 Check that `ANTHROPIC_API_KEY` in `.env` is correct and that your Anthropic account has available credits.
 

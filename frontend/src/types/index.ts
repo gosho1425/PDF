@@ -176,6 +176,10 @@ export interface IngestStatus {
   /** OS-level error detail when not mounted (e.g. path not found, permission denied) */
   mount_error: string | null;
   hint: string | null;
+  /** Raw INGEST_DIR value as seen by the container process */
+  ingest_dir_from_env: string;
+  /** True when the folder is the empty project-internal fallback (HOST_PAPER_DIR not set) */
+  is_fallback_mount: boolean;
 }
 
 /** Result returned by GET /jobs/{taskId}/celery-status after a scan */

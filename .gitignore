@@ -74,3 +74,4 @@ celerybeat.pid
 coverage.xml
 .coverage
 htmlcov/
+.github/

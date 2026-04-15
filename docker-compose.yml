@@ -131,7 +131,9 @@ services:
       DATA_DIR: /app/data
       # Container-side ingestion folder (host folder is mounted below)
       INGEST_DIR: ${INGEST_DIR:-/ingest}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+      # Include all common origins so the browser can reach the API regardless
+      # of which port the user opened. The list is comma-separated.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000}
       DEBUG: ${DEBUG:-false}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_FORMAT: ${LOG_FORMAT:-json}
@@ -145,10 +147,18 @@ services:
       # Set HOST_PAPER_DIR in .env — NO inline comments, NO trailing spaces.
       #   Windows : HOST_PAPER_DIR=C:\Users\Alice\Documents\papers
       #   macOS   : HOST_PAPER_DIR=/home/alice/papers
+      #
+      # FALLBACK: if HOST_PAPER_DIR is not set, ./data/ingest (already in repo)
+      # is used. The UI will show "Fallback (empty)" with instructions.
+      #
+      # create_host_path: true  → Docker will create the source directory on the
+      # host if it does not exist (avoids "bind source path does not exist" error).
       - type: bind
         source: ${HOST_PAPER_DIR:-./data/ingest}
         target: /ingest
         read_only: true
+        bind:
+          create_host_path: true
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -198,6 +208,8 @@ services:
         source: ${HOST_PAPER_DIR:-./data/ingest}
         target: /ingest
         read_only: true
+        bind:
+          create_host_path: true
     depends_on:
       db:
         condition: service_healthy
