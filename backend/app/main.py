@@ -1,105 +1,92 @@
 """
-PaperLens FastAPI Application
-
-Architecture:
-  - FastAPI handles HTTP requests
-  - All LLM calls are proxied through the backend (NEVER exposed to frontend)
-  - Celery handles async background processing
-  - PostgreSQL stores structured data
-  - Local filesystem stores files (abstracted for future S3 migration)
+PaperLens v2 — Windows-first local research tool.
+Runs directly on Windows with: python -m uvicorn app.main:app --reload
+No Docker, no PostgreSQL, no Redis required.
 """
 from __future__ import annotations
 
 import time
-from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.v1 import api_router
 from app.core.config import get_settings
-from app.core.logging import configure_logging, get_logger
+from app.core.logging import get_logger, setup_logging
+from app.db.database import init_db
 
-configure_logging()
-log = get_logger(__name__)
+# ── Bootstrap ──────────────────────────────────────────────────────────────────
 settings = get_settings()
+setup_logging(debug=settings.DEBUG)
+log = get_logger(__name__)
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application startup and shutdown events."""
-    log.info("PaperLens starting up", version=settings.APP_VERSION)
-    settings.ensure_dirs()
-    yield
-    log.info("PaperLens shutting down")
-
-
+# ── FastAPI app ────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="PaperLens API",
+    title="PaperLens",
     description=(
-        "Scientific paper extraction and structured research data management. "
-        "Extracts structured scientific data from PDFs using Claude AI (server-side only)."
+        "Local research paper extraction tool. "
+        "Scans a Windows folder for PDFs, extracts structured data with AI, "
+        "stores results locally. No cloud infrastructure required."
     ),
     version=settings.APP_VERSION,
-    lifespan=lifespan,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
 )
 
-# ── CORS ───────────────────────────────────────────────────────────────────────
+# ── CORS — allow the local Next.js dev server ──────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ── Request timing middleware ──────────────────────────────────────────────────
+# ── Startup ────────────────────────────────────────────────────────────────────
+@app.on_event("startup")
+def on_startup():
+    log.info(f"PaperLens v{settings.APP_VERSION} starting…")
+    settings.ensure_dirs()
+    init_db()
+    log.info(f"Database: {settings.DB_PATH}")
+    log.info(f"LLM: {settings.LLM_PROVIDER} / {settings.LLM_MODEL}")
+    log.info("Ready — API docs at http://localhost:8000/api/docs")
+
+
+# ── Request timing ─────────────────────────────────────────────────────────────
 @app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    start = time.time()
+async def timing(request: Request, call_next):
+    t0 = time.time()
     response = await call_next(request)
-    duration = time.time() - start
-    response.headers["X-Process-Time"] = f"{duration:.4f}"
+    response.headers["X-Process-Time"] = f"{time.time()-t0:.3f}s"
     return response
 
 
-# ── Global exception handler ───────────────────────────────────────────────────
+# ── Global error handler ───────────────────────────────────────────────────────
 @app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    log.error("Unhandled exception", path=request.url.path, error=str(exc), exc_info=True)
+async def global_error(request: Request, exc: Exception):
+    log.error(f"Unhandled error: {exc}", exc_info=True)
     return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "error": "Internal server error",
-            "message": str(exc) if settings.DEBUG else "An unexpected error occurred",
-        },
+        status_code=500,
+        content={"error": str(exc) if settings.DEBUG else "Internal server error"},
     )
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
-app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+app.include_router(api_router, prefix="/api")
 
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint for Docker / load balancer."""
-    return {
-        "status": "healthy",
-        "app": settings.APP_NAME,
-        "version": settings.APP_VERSION,
-        "environment": settings.ENVIRONMENT,
-    }
+def health():
+    return {"status": "ok", "version": settings.APP_VERSION}
 
 
 @app.get("/")
-async def root():
-    return {
-        "app": settings.APP_NAME,
-        "version": settings.APP_VERSION,
-        "docs": "/api/docs",
-    }
+def root():
+    return {"app": settings.APP_NAME, "version": settings.APP_VERSION, "docs": "/api/docs"}
