@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import { Nav } from '@/components/layout/Nav';
 import { Toaster } from '@/components/ui/Toaster';
+import BackendBanner from '@/components/ui/BackendBanner';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={inter.className}>
         <div className="min-h-screen flex flex-col">
           <Nav />
+          <BackendBanner />
           <main className="flex-1 container mx-auto max-w-7xl px-4 py-8">
             {children}
           </main>

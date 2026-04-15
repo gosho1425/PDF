@@ -28,6 +28,16 @@ export const api = axios.create({
 api.interceptors.response.use(
   (r) => r,
   (err) => {
+    // 503 means the Next.js proxy could not reach the FastAPI backend
+    if (err.response?.status === 503) {
+      const detail = err.response?.data?.detail ?? '';
+      return Promise.reject(
+        new Error(
+          'Backend not running. Start it with: cd backend && .venv\\Scripts\\activate && uvicorn app.main:app --reload' +
+          (detail ? `\n(${detail})` : '')
+        )
+      );
+    }
     const msg =
       err.response?.data?.detail ||
       err.response?.data?.error ||
