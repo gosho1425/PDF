@@ -34,15 +34,13 @@ app = FastAPI(
     redoc_url="/api/redoc",
 )
 
-# ── CORS — allow the local Next.js dev server ──────────────────────────────────
+# ── CORS ───────────────────────────────────────────────────────────────────────
+# This is a local-only tool — allow all origins so the Next.js proxy,
+# direct curl calls, and the Swagger UI all work without configuration.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3000",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,   # must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )

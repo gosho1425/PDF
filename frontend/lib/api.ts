@@ -1,11 +1,16 @@
 /**
- * API client — communicates with the local FastAPI backend on port 8000.
+ * API client — all requests go to the SAME origin as the frontend.
+ * next.config.mjs rewrites /api/* → http://localhost:8000/api/*
+ * so the browser never touches port 8000 directly (no CORS, works everywhere).
  * The API key is NEVER exposed here — it lives in backend/.env only.
  */
 
 import axios from 'axios';
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+// Empty string = same origin. Next.js rewrites handle the proxy.
+// NEXT_PUBLIC_API_URL is only needed if you run the frontend standalone
+// without the Next.js dev/prod server (rare).
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 export const api = axios.create({
   baseURL: BASE,
