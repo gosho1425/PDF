@@ -32,18 +32,23 @@ Copy-Item .env.example .env
 ```
 Or just right-click `.env.example` in File Explorer → **Copy** → **Paste** → rename the copy to `.env`.
 
-**Step 4 — Edit `.env`**
+**Step 4 — Edit `.env`** ← **This step is critical — do not skip it**
+
 Open `.env` in Notepad (or any text editor). Find and fill in **three required lines**:
 ```
-POSTGRES_PASSWORD=CHANGE_ME_STRONG_PASSWORD
-ANTHROPIC_API_KEY=sk-ant-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+POSTGRES_PASSWORD=PaperLens2024!
+ANTHROPIC_API_KEY=sk-ant-YOUR_REAL_KEY_HERE
 HOST_PAPER_DIR=C:\Users\YourName\Documents\papers
 ```
-- `POSTGRES_PASSWORD` — any strong password (no spaces)
-- `ANTHROPIC_API_KEY` — your key from https://console.anthropic.com/
-- `HOST_PAPER_DIR` — the Windows folder that contains your PDFs (use backslashes or forward slashes; Docker Desktop handles both)
+
+> ⚠️ **`POSTGRES_PASSWORD` must not be left as `CHANGE_ME_STRONG_PASSWORD`** — PostgreSQL will refuse to start if the password is empty or is the placeholder value. Use any password with at least 8 characters (no spaces). You do not need to remember it.
+
+- `ANTHROPIC_API_KEY` — your key from https://console.anthropic.com/ (starts with `sk-ant-`)
+- `HOST_PAPER_DIR` — the Windows folder containing your PDF files
 
 Save the file.
+
+> **Tip:** Run `.\scripts\check-env.ps1` in PowerShell to verify all values are correct before starting Docker.
 
 **Step 5 — Start the app**
 ```cmd
@@ -434,6 +439,53 @@ docker compose down -v
 
 ### Troubleshooting
 
+> **Quickest diagnostic:** Run the check script — it inspects every common failure cause and tells you exactly what to fix:
+> - **Windows PowerShell:** `.\scripts\check-env.ps1`
+> - **macOS / Linux:** `bash scripts/check-env.sh`
+
+---
+
+#### ❌ `pdf-db-1` fails / `pdf-migrate-1` exits with code 1
+
+This is the **most common startup failure on Windows**. There are three causes — work through them in order:
+
+**Cause 1 (most common): `POSTGRES_PASSWORD` is empty or still the placeholder**
+
+PostgreSQL 15 refuses to start if the password is blank or contains `CHANGE_ME`.
+
+1. Open `.env` in Notepad
+2. Find this line: `POSTGRES_PASSWORD=CHANGE_ME_STRONG_PASSWORD`
+3. Replace with a real password, e.g. `POSTGRES_PASSWORD=PaperLens2024!`
+4. Save and restart:
+   ```cmd
+   docker compose down
+   docker compose up -d
+   ```
+
+Check the actual error with:
+```cmd
+docker compose logs db
+```
+
+**Cause 2: Stale volume from a previous run with a different password**
+
+If you already ran `docker compose up -d` once (even briefly) with one password, then changed the password in `.env`, PostgreSQL will reject the new password because the volume still holds the database initialised with the old one.
+
+Fix — **this deletes all stored data**:
+```cmd
+docker compose down -v
+docker compose up -d
+```
+
+**Cause 3: Docker Desktop / WSL 2 not ready yet**
+
+On a freshly rebooted Windows machine, Docker Desktop can take 30–60 seconds after the icon appears before it's fully ready. Wait until the whale icon in the system tray stops animating, then retry:
+```cmd
+docker compose up -d
+```
+
+---
+
 **"docker: command not found" or "docker is not recognized"**
 → Docker Desktop is not installed or not running. Install it from https://www.docker.com/products/docker-desktop/ and make sure it is open.
 
@@ -443,17 +495,18 @@ docker compose down -v
 **"error during connect" on Windows**
 → WSL 2 may not be enabled. Open Docker Desktop → Settings → General → ensure "Use the WSL 2 based engine" is checked. Or run `wsl --install` in an administrator PowerShell.
 
-**A container exits immediately**
-Run `docker compose logs api` (or `worker`, `db`, `frontend`, etc.) to see the error message.
-
-The most common cause is a missing or incorrect `.env` value — especially `POSTGRES_PASSWORD` being empty.
+**A container exits immediately (other than db)**
+Run `docker compose logs <service-name>` to see the error message. Replace `<service-name>` with `api`, `worker`, `migrate`, `frontend`, etc.
 
 **Frontend build fails with "npm ci can only install with an existing package-lock.json"**
-This means `package-lock.json` is missing. This file is committed in the repository, so it should always be present after `git clone`. If you deleted it or downloaded the ZIP without it, re-clone the repo:
+This file is committed in the repository and should always be present after `git clone`. Re-clone if missing:
 ```
 git clone https://github.com/gosho1425/PDF.git
 ```
-If you see this error after pulling an update, the lockfile may have been regenerated. Run `docker compose build --no-cache frontend` to force a clean rebuild.
+Or force a clean frontend rebuild:
+```
+docker compose build --no-cache frontend
+```
 
 **Port already in use**
 If port 3000 or 8000 is already used by another app, edit `.env` and change `FRONTEND_PORT` or `API_PORT` to a different number, then restart.
