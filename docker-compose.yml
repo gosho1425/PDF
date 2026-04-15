@@ -14,6 +14,17 @@
 #   contains the PDF files you want to ingest.  The folder is mounted
 #   read-only at /ingest inside the api and worker containers.
 #
+#   IMPORTANT — Windows path rules for .env:
+#     1. Use backslashes OR forward slashes — both work.
+#     2. NO inline comments after the path — Docker Compose includes everything
+#        after the = sign up to end-of-line as part of the value.
+#        WRONG:  HOST_PAPER_DIR=C:\papers   # my PDFs
+#        RIGHT:  HOST_PAPER_DIR=C:\papers
+#     3. NO trailing spaces after the path.
+#     4. Also add: COMPOSE_CONVERT_WINDOWS_PATHS=1
+#        This tells Docker Compose to convert Windows drive-letter paths
+#        (C:\...) automatically. See .env.example.
+#
 #   Windows examples (in .env):
 #     HOST_PAPER_DIR=C:\Users\Alice\Documents\papers
 #     HOST_PAPER_DIR=D:\research\pdfs
@@ -21,9 +32,6 @@
 #   macOS / Linux examples:
 #     HOST_PAPER_DIR=/home/alice/papers
 #     HOST_PAPER_DIR=/Volumes/Data/papers
-#
-#   Docker Desktop for Windows automatically converts Windows paths to the
-#   correct format; no extra escaping is required.
 #
 # TROUBLESHOOTING — If pdf-db-1 fails to start:
 #   1. Make sure POSTGRES_PASSWORD is set in .env (not empty, not placeholder)
@@ -130,11 +138,17 @@ services:
     volumes:
       - paper_data:/app/data
       # ── Host PDF folder (read-only) ──────────────────────────────────────────
-      # Set HOST_PAPER_DIR in .env to your host folder path.
-      # Windows: HOST_PAPER_DIR=C:\Users\Alice\Documents\papers
-      # macOS:   HOST_PAPER_DIR=/home/alice/papers
-      # If HOST_PAPER_DIR is not set, falls back to ./data/ingest (empty local folder).
-      - ${HOST_PAPER_DIR:-./data/ingest}:/ingest:ro
+      # Long-form bind mount syntax avoids Windows drive-letter path ambiguity.
+      # The short form  "C:\path:/ingest"  can be mis-parsed as named-volume:path.
+      # Long form always works on Windows, macOS, and Linux.
+      #
+      # Set HOST_PAPER_DIR in .env — NO inline comments, NO trailing spaces.
+      #   Windows : HOST_PAPER_DIR=C:\Users\Alice\Documents\papers
+      #   macOS   : HOST_PAPER_DIR=/home/alice/papers
+      - type: bind
+        source: ${HOST_PAPER_DIR:-./data/ingest}
+        target: /ingest
+        read_only: true
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -179,8 +193,11 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-json}
     volumes:
       - paper_data:/app/data
-      # Same read-only mount so the worker can read PDFs during scan_folder
-      - ${HOST_PAPER_DIR:-./data/ingest}:/ingest:ro
+      # Same long-form bind mount as the api service (worker needs to read PDFs)
+      - type: bind
+        source: ${HOST_PAPER_DIR:-./data/ingest}
+        target: /ingest
+        read_only: true
     depends_on:
       db:
         condition: service_healthy

@@ -173,6 +173,8 @@ export interface IngestStatus {
   ingest_dir: string;
   mounted: boolean;
   pdf_count_in_folder: number | null;
+  /** OS-level error detail when not mounted (e.g. path not found, permission denied) */
+  mount_error: string | null;
   hint: string | null;
 }
 

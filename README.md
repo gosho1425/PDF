@@ -34,17 +34,21 @@ Or just right-click `.env.example` in File Explorer → **Copy** → **Paste** �
 
 **Step 4 — Edit `.env`** ← **This step is critical — do not skip it**
 
-Open `.env` in Notepad (or any text editor). Find and fill in **three required lines**:
+Open `.env` in Notepad (or any text editor). Find and fill in **these required lines**:
 ```
 POSTGRES_PASSWORD=PaperLens2024!
 ANTHROPIC_API_KEY=sk-ant-YOUR_REAL_KEY_HERE
 HOST_PAPER_DIR=C:\Users\YourName\Documents\papers
+COMPOSE_CONVERT_WINDOWS_PATHS=1
 ```
 
-> ⚠️ **`POSTGRES_PASSWORD` must not be left as `CHANGE_ME_STRONG_PASSWORD`** — PostgreSQL will refuse to start if the password is empty or is the placeholder value. Use any password with at least 8 characters (no spaces). You do not need to remember it.
+> ⚠️ **`POSTGRES_PASSWORD`** must not be left as `CHANGE_ME_STRONG_PASSWORD` — PostgreSQL will refuse to start. Use any password with at least 8 characters. You do not need to remember it.
+
+> ⚠️ **`HOST_PAPER_DIR`** — write the path only, with nothing after it. **No `# comments`**, no trailing spaces. Everything after the `=` on that line becomes part of the path, including comments. Docker Compose does not strip inline comments from `.env` values.
 
 - `ANTHROPIC_API_KEY` — your key from https://console.anthropic.com/ (starts with `sk-ant-`)
-- `HOST_PAPER_DIR` — the Windows folder containing your PDF files
+- `HOST_PAPER_DIR` — the Windows folder containing your PDF files (must already exist on your machine)
+- `COMPOSE_CONVERT_WINDOWS_PATHS=1` — required on Windows so Docker correctly converts `C:\...` paths
 
 Save the file.
 
@@ -77,21 +81,28 @@ PaperLens **does not use browser upload**. PDFs are ingested by mounting a host 
 ### What you add to `.env`
 
 ```env
-# Path to the folder on YOUR machine that contains the PDF files
 HOST_PAPER_DIR=C:\Users\Alice\Documents\papers
-
-# Container-side mount point (leave as /ingest unless you have a reason to change)
 INGEST_DIR=/ingest
+COMPOSE_CONVERT_WINDOWS_PATHS=1
 ```
+
+> ⚠️ **Critical rules for `HOST_PAPER_DIR`:**
+> - Write the path **only** — no `# comments` after it, no trailing spaces.
+>   Docker Compose includes everything after `=` verbatim, including comments.
+> - `COMPOSE_CONVERT_WINDOWS_PATHS=1` is required on Windows for Docker Compose
+>   to convert `C:\...` drive-letter paths correctly.
 
 ### How Docker Compose mounts it
 
-`docker-compose.yml` already contains:
+`docker-compose.yml` uses long-form bind mount syntax (handles Windows paths correctly):
 ```yaml
 volumes:
-  - ${HOST_PAPER_DIR:-./data/ingest}:/ingest:ro   # read-only
+  - type: bind
+    source: ${HOST_PAPER_DIR:-./data/ingest}
+    target: /ingest
+    read_only: true
 ```
-The `:ro` flag means the container can read but never modify your host files.
+`read_only: true` means the container can read but never modify your host files.
 
 ### Supported path formats on Windows
 
@@ -103,7 +114,7 @@ Docker Desktop (with WSL 2) accepts all of these in `.env`:
 | `C:/Users/Alice/papers` | ✅ Yes (forward slashes) |
 | `//c/Users/Alice/papers` | ✅ Yes (Git Bash style) |
 
-> **Tip:** Avoid paths with spaces. If you must use them, wrap the value in double quotes in `.env`:
+> **Tip:** Avoid spaces in the path if possible. If you must use them, wrap the whole value in double quotes:
 > `HOST_PAPER_DIR="C:\My Documents\papers"`
 
 ### Adding more PDFs later
@@ -331,20 +342,25 @@ Open `.env` in any text editor:
 
 **Linux:** `nano .env` or `gedit .env`
 
-Find and fill in these **three required lines**:
+Find and fill in these required lines:
 
 ```
-POSTGRES_PASSWORD=CHANGE_ME_STRONG_PASSWORD
-ANTHROPIC_API_KEY=sk-ant-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+POSTGRES_PASSWORD=PaperLens2024!
+ANTHROPIC_API_KEY=sk-ant-YOUR_REAL_KEY_HERE
 HOST_PAPER_DIR=C:\Users\YourName\Documents\papers
+COMPOSE_CONVERT_WINDOWS_PATHS=1
 ```
 
-- Replace `CHANGE_ME_STRONG_PASSWORD` with any strong password (no spaces). Example: `PaperLens2024!`
-- Replace `sk-ant-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` with your real Anthropic API key
-- Replace `C:\Users\YourName\Documents\papers` with the actual path to your PDF folder
+- Replace `PaperLens2024!` with any strong password (no spaces).
+- Replace `sk-ant-YOUR_REAL_KEY_HERE` with your real Anthropic API key.
+- Replace `C:\Users\YourName\Documents\papers` with the actual path to your PDF folder.
+- Keep `COMPOSE_CONVERT_WINDOWS_PATHS=1` — required on Windows.
 
-**Windows users:** use backslashes (`\`) or forward slashes (`/`) — Docker Desktop handles both.
-**macOS / Linux users:** use a normal Unix path, e.g. `/home/alice/papers`.
+> ⚠️ **`HOST_PAPER_DIR` rule**: write the path and nothing else on that line — **no `# comments`**, no trailing spaces.  
+> Docker Compose treats everything after `=` literally, so `HOST_PAPER_DIR=C:\papers  # my folder` would set the path to `C:\papers  # my folder` (with the comment text), and the mount will fail.
+
+**Windows users:** backslashes (`\`) and forward slashes (`/`) both work.  
+**macOS / Linux users:** use a normal Unix path, e.g. `/home/alice/papers`. You can remove `COMPOSE_CONVERT_WINDOWS_PATHS`.
 
 Everything else can stay as-is for a first run.
 
@@ -541,10 +557,44 @@ docker compose build --no-cache frontend
 If port 3000 or 8000 is already used by another app, edit `.env` and change `FRONTEND_PORT` or `API_PORT` to a different number, then restart.
 
 **Ingestion folder shows "Not mounted"**
-Check that `HOST_PAPER_DIR` is set in `.env` and points to a real folder on your machine, then restart:
+
+This is the most common issue after editing `.env`. Work through these causes:
+
+**Cause 1 — Inline comment or trailing space on the `HOST_PAPER_DIR` line (most common)**
+
+Docker Compose reads the *entire* rest of the line after `=` as the value. An inline comment becomes part of the path:
 ```
+# WRONG — the path will be: C:\papers   # my PDFs
+HOST_PAPER_DIR=C:\papers   # my PDFs
+
+# RIGHT — nothing after the path
+HOST_PAPER_DIR=C:\papers
+```
+Open `.env` in Notepad, find the `HOST_PAPER_DIR` line, and remove everything after the actual folder path. Save, then restart.
+
+**Cause 2 — Missing `COMPOSE_CONVERT_WINDOWS_PATHS=1` on Windows**
+
+Without this variable, Docker Compose may not convert `C:\...` paths correctly. Add it to `.env`:
+```
+COMPOSE_CONVERT_WINDOWS_PATHS=1
+```
+
+**Cause 3 — Did not restart Docker after editing `.env`**
+
+Compose reads `.env` only on startup — a running container never sees changes. You must restart:
+```cmd
 docker compose down && docker compose up -d
 ```
+
+**Cause 4 — The folder does not exist on your host machine**
+
+Create the folder first, then restart:
+```cmd
+mkdir C:\Users\YourName\Documents\papers
+docker compose down && docker compose up -d
+```
+
+After restarting, click **Refresh** on the Ingest page — it should show "✓ Mounted" and the PDF count.
 
 **App opens but shows errors after scanning**
 Check that `ANTHROPIC_API_KEY` in `.env` is correct and that your Anthropic account has available credits.

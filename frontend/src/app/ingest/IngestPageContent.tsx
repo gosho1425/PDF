@@ -195,23 +195,82 @@ export function IngestPageContent() {
             </button>
           </div>
 
-          {/* Quick fix instructions when not mounted */}
+          {/* Detailed fix instructions when not mounted */}
           {!mounted && (
-            <div className="mt-4 pt-4 border-t border-amber-200">
-              <p className="text-xs font-semibold text-amber-800 mb-2">
-                How to fix — add to your <code className="font-mono">.env</code>:
+            <div className="mt-4 pt-4 border-t border-amber-200 space-y-3">
+
+              {/* OS-level error from backend */}
+              {ingestStatus?.mount_error && (
+                <div className="bg-red-50 border border-red-200 rounded p-2.5">
+                  <p className="text-xs font-semibold text-red-700 mb-0.5">Container error:</p>
+                  <p className="text-xs font-mono text-red-800 break-all">{ingestStatus.mount_error}</p>
+                </div>
+              )}
+
+              <p className="text-xs font-semibold text-amber-800">
+                Fix checklist — work through these steps in order:
               </p>
+
+              <ol className="space-y-2 text-xs text-amber-900">
+                <li className="flex gap-2">
+                  <span className="font-bold shrink-0">1.</span>
+                  <span>
+                    Open your <code className="font-mono bg-amber-100 px-1 rounded">.env</code> file and set{' '}
+                    <code className="font-mono bg-amber-100 px-1 rounded">HOST_PAPER_DIR</code> to your PDF folder path.
+                    <br />
+                    <span className="text-amber-700">
+                      ⚠ No inline comments! Everything after <code className="font-mono">=</code> on that line
+                      is the path. Remove any <code className="font-mono"># comment</code> or trailing spaces.
+                    </span>
+                  </span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="font-bold shrink-0">2.</span>
+                  <span>
+                    On <strong>Windows</strong>, also add this line to <code className="font-mono bg-amber-100 px-1 rounded">.env</code>:
+                    <br />
+                    <code className="font-mono bg-amber-100 px-1 rounded">COMPOSE_CONVERT_WINDOWS_PATHS=1</code>
+                    <br />
+                    <span className="text-amber-700">This tells Docker Compose to convert <code>C:\…</code> paths correctly.</span>
+                  </span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="font-bold shrink-0">3.</span>
+                  <span>
+                    Make sure the folder actually exists on your machine. Create it if needed.
+                  </span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="font-bold shrink-0">4.</span>
+                  <span>
+                    Restart Docker Compose to apply the new volume mount:
+                    <br />
+                    <code className="font-mono bg-amber-100 px-1 rounded block mt-1 py-1">
+                      docker compose down &amp;&amp; docker compose up -d
+                    </code>
+                  </span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="font-bold shrink-0">5.</span>
+                  <span>
+                    Come back here and click <strong>Refresh</strong> — the status should turn green.
+                  </span>
+                </li>
+              </ol>
+
               <div className="bg-amber-100 rounded p-3 text-xs font-mono space-y-0.5 text-amber-900">
-                <p># Windows example:</p>
+                <p className="text-amber-700 font-sans font-semibold not-italic">
+                  Correct .env entries (Windows):
+                </p>
                 <p>HOST_PAPER_DIR=C:\Users\YourName\Documents\papers</p>
-                <p className="mt-1"># macOS / Linux example:</p>
+                <p>INGEST_DIR=/ingest</p>
+                <p>COMPOSE_CONVERT_WINDOWS_PATHS=1</p>
+                <p className="mt-1 text-amber-700 font-sans font-semibold not-italic">
+                  macOS / Linux:
+                </p>
                 <p>HOST_PAPER_DIR=/home/yourname/papers</p>
-                <p className="mt-1">INGEST_DIR=/ingest</p>
+                <p>INGEST_DIR=/ingest</p>
               </div>
-              <p className="text-xs text-amber-700 mt-2">
-                Then run <code className="font-mono">docker compose down &amp;&amp; docker compose up -d</code> to
-                apply the change.
-              </p>
             </div>
           )}
         </div>
@@ -275,7 +334,7 @@ export function IngestPageContent() {
           <Info className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
           <div className="text-xs text-blue-700 space-y-1">
             <p className="font-semibold">How folder-based ingestion works</p>
-            <p>1. Place PDF files in the host folder configured as <code className="font-mono bg-blue-100 px-1 rounded">HOST_PAPER_DIR</code>.</p>
+            <p>1. Place PDF files in the host folder configured as <code className="font-mono bg-blue-100 px-1 rounded">HOST_PAPER_DIR</code> in <code className="font-mono bg-blue-100 px-1 rounded">.env</code> (no inline comments or trailing spaces on that line).</p>
             <p>2. Click <strong>Scan Now</strong> — or set up a scheduled job to call <code className="font-mono bg-blue-100 px-1 rounded">POST /api/v1/papers/scan</code>.</p>
             <p>3. Each PDF is hashed (SHA-256). Already-ingested files are skipped; new ones are queued.</p>
             <p>4. The Celery worker parses the PDF, calls Claude 3.5 Sonnet for extraction, and stores results in PostgreSQL.</p>
