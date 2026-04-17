@@ -3,11 +3,19 @@ Folder scanner — the core ingestion engine.
 
 Workflow for each PDF found:
   1. Compute SHA-256
-  2. Check if already in DB → skip if yes
-  3. Extract text
-  4. Call LLM for structured extraction
-  5. Write summary .txt and extraction .json to data/
-  6. Save Paper record to SQLite
+  2. Check if already in DB with status=done -> skip
+  3. If status=failed (prior attempt) -> allow reprocessing
+  4. Extract text
+  5. Call LLM for structured extraction
+  6. Write summary .txt and extraction .json to data/
+  7. Save Paper record to SQLite
+
+Data safety guarantees:
+  - Already-processed (done) papers are NEVER re-touched by a normal scan.
+  - SHA-256 deduplication means the same PDF content is only processed once.
+  - If processing fails the Paper record is kept with status=failed and
+    the original SHA-256, so a future reprocess attempt can find it.
+  - Output files (summaries/, extractions/) are only written on success.
 """
 from __future__ import annotations
 
@@ -49,10 +57,21 @@ def sha256_of_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def run_scan(db: Session, custom_parameters: Optional[list[dict]] = None) -> ScanResult:
+def run_scan(
+    db: Session,
+    custom_parameters: Optional[list[dict]] = None,
+    reprocess_failed: bool = False,
+) -> ScanResult:
     """
     Scan the configured folder for new PDFs and process them.
+
+    Args:
+        db: SQLAlchemy session
+        custom_parameters: override custom extraction params (uses DB value if None)
+        reprocess_failed: if True, also reprocess papers with status=failed
+
     Returns a ScanResult summary.
+    Existing successfully processed papers (status=done) are always skipped.
     """
     t0 = time.time()
     result = ScanResult()
@@ -76,14 +95,15 @@ def run_scan(db: Session, custom_parameters: Optional[list[dict]] = None) -> Sca
     log.info(f"Scanning folder: {folder}")
 
     # ── Find PDFs ─────────────────────────────────────────────────────────────
-    pdf_files = sorted(folder.rglob("*.pdf"))
-    # Also find .PDF (case-insensitive for Windows)
-    pdf_files_upper = sorted(folder.rglob("*.PDF"))
-    seen = set(p.resolve() for p in pdf_files)
-    for p in pdf_files_upper:
-        if p.resolve() not in seen:
-            pdf_files.append(p)
-            seen.add(p.resolve())
+    pdf_files: list[Path] = []
+    seen: set[Path] = set()
+    for pattern in ("*.pdf", "*.PDF"):
+        for p in folder.rglob(pattern):
+            rp = p.resolve()
+            if rp not in seen:
+                pdf_files.append(p)
+                seen.add(rp)
+    pdf_files.sort(key=lambda p: p.name.lower())
 
     result.total_found = len(pdf_files)
     log.info(f"Found {result.total_found} PDF(s)")
@@ -92,9 +112,15 @@ def run_scan(db: Session, custom_parameters: Optional[list[dict]] = None) -> Sca
 
     for pdf_path in pdf_files:
         try:
-            _process_one(db, pdf_path, settings, custom_parameters, result)
+            _process_one(
+                db, pdf_path, settings, custom_parameters, result,
+                reprocess_failed=reprocess_failed,
+            )
         except Exception as e:
-            log.error(f"Unexpected error processing {pdf_path.name}: {e}", exc_info=True)
+            log.error(
+                f"Unexpected error processing {pdf_path.name}: {e}",
+                exc_info=True,
+            )
             result.failed += 1
             result.errors.append(f"{pdf_path.name}: {e}")
 
@@ -113,35 +139,67 @@ def _process_one(
     settings,
     custom_parameters: list[dict],
     result: ScanResult,
+    reprocess_failed: bool = False,
 ) -> None:
     """Process a single PDF file."""
 
     # ── SHA-256 dedup ─────────────────────────────────────────────────────────
     sha = sha256_of_file(pdf_path)
     existing = db.query(Paper).filter(Paper.sha256 == sha).first()
-    if existing:
-        log.debug(f"Skipping {pdf_path.name} (already processed, id={existing.id})")
-        result.skipped += 1
-        return
 
-    # ── Create pending record ─────────────────────────────────────────────────
-    paper = Paper(
-        file_path=str(pdf_path),
-        file_name=pdf_path.name,
-        file_size_bytes=pdf_path.stat().st_size,
-        sha256=sha,
-        status=PaperStatus.processing,
-    )
-    db.add(paper)
-    db.flush()  # get the id without committing
+    if existing:
+        if existing.status == PaperStatus.done:
+            log.debug(f"Skipping {pdf_path.name} (already done, id={existing.id})")
+            result.skipped += 1
+            return
+
+        if existing.status == PaperStatus.failed and not reprocess_failed:
+            log.debug(
+                f"Skipping {pdf_path.name} (previously failed: {existing.error_message[:80]}). "
+                "Use 'Reprocess Failed' to retry."
+            )
+            result.skipped += 1
+            return
+
+        if existing.status in (PaperStatus.failed, PaperStatus.processing):
+            # Allow reprocessing
+            log.info(
+                f"Reprocessing {pdf_path.name} "
+                f"(previous status={existing.status.value})"
+            )
+            paper = existing
+            paper.status = PaperStatus.processing
+            paper.error_message = None
+            db.flush()
+        else:
+            # pending — process normally
+            paper = existing
+    else:
+        # ── Create new pending record ──────────────────────────────────────────
+        paper = Paper(
+            file_path=str(pdf_path),
+            file_name=pdf_path.name,
+            file_size_bytes=pdf_path.stat().st_size,
+            sha256=sha,
+            status=PaperStatus.processing,
+        )
+        db.add(paper)
+        db.flush()
 
     try:
-        log.info(f"Processing: {pdf_path.name}")
+        log.info(f"Processing: {pdf_path.name} ({pdf_path.stat().st_size / 1024:.0f} KB)")
 
         # ── Extract PDF text ──────────────────────────────────────────────────
         text = extract_text(pdf_path)
-        if len(text.strip()) < 50:
-            raise ValueError("Extracted text too short — may be a scanned/image PDF.")
+        text_len = len(text.strip())
+        if text_len < 50:
+            raise ValueError(
+                f"Extracted text too short ({text_len} chars). "
+                "The PDF may be scanned/image-only (no machine-readable text). "
+                "OCR is not supported in this version."
+            )
+
+        log.info(f"Extracted {len(text):,} chars from {pdf_path.name}")
 
         # ── LLM extraction ────────────────────────────────────────────────────
         provider = get_llm_provider()
@@ -169,24 +227,41 @@ def _process_one(
 
         db.commit()
         result.new_processed += 1
-        log.info(f"Done: {pdf_path.name} → {extraction.title or '(no title)'}")
+        log.info(f"Done: {pdf_path.name} -> {extraction.title or '(no title)'}")
 
     except Exception as e:
         db.rollback()
-        log.error(f"Failed: {pdf_path.name}: {e}")
-        # Re-attach and mark as failed
+        error_msg = str(e)
+        log.error(f"Failed: {pdf_path.name}: {error_msg}")
+
+        # Re-attach and mark as failed with detailed error
         paper = db.merge(paper)
-        paper.status = PaperStatus.failed
-        paper.error_message = str(e)
-        paper.processed_at = datetime.utcnow()
+        paper.status        = PaperStatus.failed
+        paper.error_message = _format_error_message(e)
+        paper.processed_at  = datetime.utcnow()
         db.commit()
+
         result.failed += 1
-        result.errors.append(f"{pdf_path.name}: {e}")
+        result.errors.append(f"{pdf_path.name}: {error_msg}")
+
+
+def _format_error_message(exc: Exception) -> str:
+    """
+    Format an exception into a human-readable error message stored in the DB.
+    This is shown in the UI next to the paper's status badge.
+    """
+    msg = str(exc)
+
+    # Truncate very long messages (e.g. full API error bodies)
+    if len(msg) > 500:
+        msg = msg[:497] + "..."
+
+    return msg
 
 
 def _write_summary(settings, paper_id: str, pdf_path: Path, extraction) -> Path:
     """Write human-readable summary .txt file."""
-    stem = pdf_path.stem[:80]  # limit filename length
+    stem = pdf_path.stem[:80]
     fname = f"{stem}_{paper_id[:8]}.txt"
     out_path = settings.SUMMARIES_DIR / fname
 
@@ -199,37 +274,40 @@ def _write_summary(settings, paper_id: str, pdf_path: Path, extraction) -> Path:
         f"Authors: {', '.join(extraction.authors) if extraction.authors else 'N/A'}",
         f"DOI:     {extraction.doi or 'N/A'}",
         "",
-        "─" * 60,
+        "-" * 60,
         "SUMMARY",
-        "─" * 60,
+        "-" * 60,
         extraction.raw_summary or "(No summary generated)",
         "",
-        "─" * 60,
+        "-" * 60,
         "MATERIAL",
-        "─" * 60,
+        "-" * 60,
     ]
     for k, fv in extraction.material_info.items():
         if fv.value is not None:
             unit = f" {fv.unit}" if fv.unit else ""
             lines.append(f"  {k}: {fv.value}{unit}  [conf={fv.confidence:.2f}]")
 
-    lines += ["", "─" * 60, "INPUT VARIABLES (controllable)", "─" * 60]
+    lines += ["", "-" * 60, "INPUT VARIABLES (controllable)", "-" * 60]
     for k, fv in extraction.input_variables.items():
         if fv.value is not None:
             unit = f" {fv.unit}" if fv.unit else ""
             lines.append(f"  {k}: {fv.value}{unit}  [conf={fv.confidence:.2f}]")
             if fv.evidence:
-                lines.append(f"    Evidence: \"{fv.evidence[:120]}\"")
+                lines.append(f'    Evidence: "{fv.evidence[:120]}"')
 
-    lines += ["", "─" * 60, "OUTPUT VARIABLES (measured)", "─" * 60]
+    lines += ["", "-" * 60, "OUTPUT VARIABLES (measured)", "-" * 60]
     for k, fv in extraction.output_variables.items():
         if fv.value is not None:
             unit = f" {fv.unit}" if fv.unit else ""
             lines.append(f"  {k}: {fv.value}{unit}  [conf={fv.confidence:.2f}]")
             if fv.evidence:
-                lines.append(f"    Evidence: \"{fv.evidence[:120]}\"")
+                lines.append(f'    Evidence: "{fv.evidence[:120]}"')
 
-    lines += ["", f"Generated by PaperLens v2 — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"]
+    lines += [
+        "",
+        f"Generated by PaperLens v2 -- {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+    ]
 
     out_path.write_text("\n".join(lines), encoding="utf-8")
     return out_path
@@ -242,5 +320,7 @@ def _write_extraction(settings, paper_id: str, extraction) -> Path:
     data = extraction.to_dict()
     data["paper_id"] = paper_id
     data["generated_at"] = datetime.utcnow().isoformat()
-    out_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     return out_path

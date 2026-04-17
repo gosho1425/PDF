@@ -1,217 +1,307 @@
 # PaperLens v2
 
-Local AI-powered research paper extraction tool.  
-Scans a folder of PDFs, extracts structured data with Claude AI, stores results in SQLite.  
-**No Docker, no PostgreSQL, no Redis required — runs entirely on Windows.**
+Local AI-powered research paper extraction tool.
+Scans a Windows folder of PDFs, extracts structured data with Claude AI,
+stores results in SQLite. **No Docker, no cloud, no PostgreSQL required.**
 
 ---
 
-## Quick Start (Windows)
+## Prerequisites
 
-### Prerequisites
 | Tool | Version | Download |
 |------|---------|----------|
-| Python | 3.10+ | https://www.python.org/downloads/ (check "Add to PATH") |
-| Node.js | 18+ LTS | https://nodejs.org/ |
+| Python | 3.10 or newer | https://www.python.org/downloads/ — check "Add Python to PATH" |
+| Node.js | 18 LTS or newer | https://nodejs.org/ |
 | Anthropic API key | — | https://console.anthropic.com/ |
-
-### One-time Setup
-1. Download / clone the repository
-2. Double-click **`setup-windows.bat`**  
-   - Creates Python virtual environment, installs all dependencies  
-   - Opens `backend/.env` in Notepad — add your `ANTHROPIC_API_KEY`  
-   - Installs Node.js packages
-
-### Start the App (every time)
-Open **two** Command Prompt windows:
-
-**Window 1 — Backend:**
-```bat
-start-backend.bat
-```
-Wait until you see: `Uvicorn running on http://127.0.0.1:8000`
-
-**Window 2 — Frontend:**
-```bat
-start-frontend.bat
-```
-Wait until you see: `Ready — started server on 0.0.0.0:3000`
-
-**Open your browser:** http://localhost:3000
 
 ---
 
-## Manual Setup (alternative)
+## First-time Setup (Windows)
+
+**Double-click `setup-windows.bat`**
+
+This will:
+1. Check Python and Node.js are installed
+2. Create a Python virtual environment in `backend/.venv/`
+3. Install all Python packages (`pip install -r requirements.txt`)
+4. Open `backend/.env` in Notepad — add your `ANTHROPIC_API_KEY`
+5. Install Node.js packages (`npm install` in `frontend/`)
+
+Run this **once only**. After that, use the start scripts below.
+
+---
+
+## Starting the App (every time)
+
+You need **two separate Command Prompt windows** (or two double-clicks):
+
+### Window 1 — Backend
+```
+Double-click: start-backend.bat
+```
+Wait until you see:
+```
+INFO: Uvicorn running on http://127.0.0.1:8000
+```
+**Keep this window open** while using the app.
+
+### Window 2 — Frontend
+```
+Double-click: start-frontend.bat
+```
+Wait until you see:
+```
+Ready - started server on 0.0.0.0:3000
+```
+**Keep this window open** while using the app.
+
+### Open the app
+```
+http://localhost:3000
+```
+
+> If you see a red banner saying "Backend not running", it means
+> `start-backend.bat` is not running. Start it first.
+
+---
+
+## Manual start (alternative, if bat files don't work)
 
 ```bat
-REM === Backend ===
-cd backend
-python -m venv .venv
+REM === Terminal 1: Backend ===
+cd path\to\paperlens\backend
 .venv\Scripts\activate.bat
-pip install -r requirements.txt
-copy .env.example .env
-notepad .env          REM <-- add ANTHROPIC_API_KEY=sk-ant-...
-uvicorn app.main:app --reload
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
-REM === Frontend (new window) ===
-cd frontend
-npm install
+REM === Terminal 2: Frontend ===
+cd path\to\paperlens\frontend
 npm run dev
 ```
 
 ---
 
-## Configuration
+## First use — set up your folder
 
-### `backend/.env`
+1. Open http://localhost:3000
+2. Click **Settings** in the nav bar
+3. Enter your PDF folder path, e.g. `E:\Papers`
+4. Click **Validate Path** — should show: `Folder accessible — N PDFs found`
+5. Click **Save Settings**
+6. Click **Scan** in the nav bar
+7. Click **Scan Now** — extraction runs per-paper (30-120s each)
+
+---
+
+## Where your data is stored
+
+All extracted data lives in **`backend/data/`** — this is never deleted by code updates.
+
+```
+backend/data/
+    app.db            <- SQLite database: all paper records, settings, scan results
+    summaries/        <- one .txt summary file per successfully processed paper
+    extractions/      <- one .json extraction file per successfully processed paper
+```
+
+**These files are gitignored** — they are your data, not code.
+A `git pull` will never touch them.
+
+### What each file contains
+
+| File | Contents |
+|------|----------|
+| `app.db` | Paper metadata, status, extracted fields, error messages, settings |
+| `summaries/*.txt` | Human-readable summary: title, authors, material, measured values |
+| `extractions/*.json` | Full structured JSON: all fields with value, unit, evidence, confidence |
+
+---
+
+## Backing up your data
+
+Run **`backup-data.bat`** at any time:
+
+```
+Double-click: backup-data.bat
+```
+
+Creates a timestamped copy in `backups/paperlens-data-YYYY-MM-DD_HHMM/`
+containing `app.db`, `summaries/`, and `extractions/`.
+
+**Recommended**: back up after each large scan session.
+
+### Restoring from backup
+
+```bat
+cd path\to\paperlens
+
+REM Stop uvicorn first (Ctrl+C in the backend window), then:
+copy backups\paperlens-data-YYYY-MM-DD_HHMM\app.db backend\data\app.db
+xcopy backups\paperlens-data-YYYY-MM-DD_HHMM\summaries\ backend\data\summaries\ /E /I
+xcopy backups\paperlens-data-YYYY-MM-DD_HHMM\extractions\ backend\data\extractions\ /E /I
+```
+
+---
+
+## Updating the code (git pull)
+
+Your extracted data is **completely safe** across code updates.
+
+```bat
+REM 1. Stop both start-backend and start-frontend windows (Ctrl+C)
+
+REM 2. Pull new code
+git pull origin paperlens-v2-mvp
+
+REM 3. Update Python packages (run if requirements.txt changed)
+cd backend
+.venv\Scripts\activate.bat
+pip install -r requirements.txt
+
+REM 4. Update Node packages (run if package.json changed)
+cd ..\frontend
+npm install
+
+REM 5. Start normally
+cd ..
+start-backend.bat   REM in one window
+start-frontend.bat  REM in another window
+```
+
+Your `backend/data/app.db`, `summaries/`, and `extractions/` are untouched.
+Already-processed PDFs are recognised by SHA-256 hash and always skipped.
+
+---
+
+## If some PDFs failed during scan
+
+Papers that fail are kept in the database with `status=failed` and an error message.
+
+**To retry them:**
+1. Go to http://localhost:3000/scan
+2. Click **Reprocess Failed**
+
+This re-runs the AI extraction only on failed papers.
+Successfully processed papers are never touched.
+
+Common failure reasons and fixes:
+
+| Error | Fix |
+|-------|-----|
+| `Anthropic API error (400): prompt is too long` | Fixed in latest version — text is now auto-chunked |
+| `Invalid ANTHROPIC_API_KEY` | Check `backend/.env` — key must start with `sk-ant-` |
+| `Extracted text too short` | PDF is scanned/image-only — OCR not supported |
+| `Anthropic API failed after 3 attempts` | Rate limit or server issue — wait and retry |
+| `No credits remaining` | Add credits at https://console.anthropic.com/settings/billing |
+
+---
+
+## Configuration — `backend/.env`
 
 ```env
 # Required
 ANTHROPIC_API_KEY=sk-ant-your-key-here
 
-# Optional — change LLM
+# LLM settings (optional)
 LLM_PROVIDER=anthropic          # or: openai
-LLM_MODEL=claude-sonnet-4-5     # or: gpt-4o, gpt-4o-mini
+LLM_MODEL=claude-sonnet-4-5     # or: claude-3-5-haiku-20241022, gpt-4o
 LLM_MAX_TOKENS=8192
 LLM_TEMPERATURE=0.1
-LLM_TIMEOUT_SECONDS=120
+LLM_TIMEOUT_SECONDS=120         # increase for slow connections
 
-# Optional — use OpenAI instead
-# LLM_PROVIDER=openai
-# LLM_MODEL=gpt-4o
-# OPENAI_API_KEY=sk-your-openai-key
-
-# Storage location (default: backend/data/)
+# Storage (default: backend/data/ relative to where uvicorn runs)
 DATA_DIR=data
+
+# Debug mode — shows full error details in API responses
+DEBUG=false
 ```
 
-### Setting the Paper Folder
+---
 
-1. Open http://localhost:3000/settings
-2. Enter your folder path, e.g. `E:\Papers`
-3. Click **Validate Path** → should show ✓ with PDF count
-4. Click **Save Settings**
-5. Go to http://localhost:3000/scan and click **Scan Now**
+## API Documentation
 
-> **Why does "Validate Path" say "Path does not exist"?**  
-> The backend runs on the same machine as your PDFs.  
-> If you see this error, make sure the backend is running AND the path is correct.  
-> Windows paths with backslashes (`E:\Papers`) work directly.
+With backend running: http://localhost:8000/api/docs
+
+Key endpoints:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/settings` | Get folder path, status, PDF count |
+| POST | `/api/settings` | Save folder path and custom params |
+| POST | `/api/settings/validate-folder` | Check if path exists and count PDFs |
+| POST | `/api/scan` | Scan folder for new PDFs |
+| POST | `/api/scan/reprocess-failed` | Retry all previously failed papers |
+| GET | `/api/scan/status` | Last scan result |
+| GET | `/api/papers` | List papers (paginated, filterable) |
+| GET | `/api/papers/{id}` | Full paper detail + extraction JSON |
+| POST | `/api/papers/{id}/reprocess` | Reprocess a single paper |
+
+---
+
+## Project structure
+
+```
+paperlens/
+    setup-windows.bat       <- First-time setup (run once)
+    start-backend.bat       <- Start FastAPI backend (run first)
+    start-frontend.bat      <- Start Next.js frontend (run second)
+    backup-data.bat         <- Back up all extracted data
+    .gitignore              <- Protects backend/data/ from git operations
+
+    backend/
+        .env.example        <- Template — copy to .env, add API key
+        .env                <- YOUR config (gitignored, never overwritten)
+        requirements.txt
+        data/               <- YOUR data (gitignored, never overwritten)
+            app.db          <- SQLite database
+            summaries/      <- .txt summaries
+            extractions/    <- .json extractions
+        app/
+            main.py         <- FastAPI application
+            api/v1/         <- Endpoints: settings, scan, papers
+            models/         <- SQLAlchemy models
+            services/       <- Scanner, PDF reader
+            llm/            <- Anthropic / OpenAI providers + schema
+
+    frontend/
+        app/                <- Next.js 14 pages
+            page.tsx        <- Dashboard
+            settings/       <- Folder config + custom params
+            scan/           <- Trigger scan, reprocess failed
+            papers/         <- Browse, search, view extractions
+        lib/api.ts          <- Axios client
+        components/         <- Nav, StatusBadge, BackendBanner
+```
 
 ---
 
 ## Troubleshooting
 
-### ✗ "TypeError: fetch failed" or "Backend not running"
+### Red banner: "Backend not running"
+`start-backend.bat` is not running. Start it first and wait for the
+`Uvicorn running on http://127.0.0.1:8000` message.
 
-The red banner at the top of the page appears when the backend is not running.
+### "Path does not exist: E:\Papers"
+The backend runs on your machine and checks the path directly.
+Make sure `start-backend.bat` is running, then try again.
 
-**Fix:**
+### "TypeError: fetch failed" / blank pages
+Same as above — backend is not running.
+
+### Port 8000 or 3000 already in use
 ```bat
-cd backend
-.venv\Scripts\activate.bat
-uvicorn app.main:app --reload
-```
-
-### ✗ "Path does not exist: E:\Papers"
-
-- The backend must be running on the **same machine** as the PDF folder  
-- Check the path in Settings — try copy-pasting from Windows Explorer  
-- Network drives (e.g. `\\server\share`) may require additional permissions
-
-### ✗ "pip install failed" / "npm install failed"
-
-- Check your internet connection  
-- For pip: try `pip install -r requirements.txt --index-url https://pypi.org/simple/`  
-- For npm: try deleting `frontend/node_modules/` and running `npm install` again
-
-### ✗ Port 8000 or 3000 already in use
-
-```bat
-REM Kill the process on port 8000:
 netstat -ano | findstr :8000
-taskkill /PID <PID> /F
+taskkill /PID <PID_NUMBER> /F
 ```
 
----
+### setup-windows.bat shows garbled characters
+Make sure you git-pulled the latest version. Old versions had an encoding
+bug. Run `git pull origin paperlens-v2-mvp` to get the fix.
 
-## Project Structure
-
-```
-paperlens/
-├── setup-windows.bat       ← First-time setup
-├── start-backend.bat       ← Start FastAPI (run first)
-├── start-frontend.bat      ← Start Next.js (run second)
-│
-├── backend/
-│   ├── .env.example        ← Copy to .env, add API key
-│   ├── requirements.txt
-│   ├── data/
-│   │   ├── app.db          ← SQLite database
-│   │   ├── summaries/      ← .txt summaries per paper
-│   │   └── extractions/    ← .json extractions per paper
-│   └── app/
-│       ├── main.py         ← FastAPI app
-│       ├── api/v1/         ← Endpoints: settings, scan, papers
-│       ├── models/         ← SQLAlchemy models
-│       ├── services/       ← Scanner, PDF reader
-│       └── llm/            ← Anthropic / OpenAI providers
-│
-└── frontend/
-    ├── app/                ← Next.js pages
-    │   ├── page.tsx        ← Dashboard
-    │   ├── settings/       ← Folder config + custom params
-    │   ├── scan/           ← Trigger scan + results
-    │   └── papers/         ← Browse + detail view
-    ├── lib/api.ts          ← Axios client → /api/proxy/*
-    └── components/         ← Nav, StatusBadge, BackendBanner
-```
+### npm install or pip install fails
+Check your internet connection.
+For pip: try `pip install -r requirements.txt --index-url https://pypi.org/simple/`
+For npm: delete `frontend/node_modules/` and try again.
 
 ---
 
-## API Docs
-
-With the backend running: http://localhost:8000/api/docs
-
-Key endpoints:
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/settings` | Get folder path and status |
-| POST | `/api/settings` | Save folder path |
-| POST | `/api/settings/validate-folder` | Check if a path exists and count PDFs |
-| POST | `/api/scan` | Scan folder and process new PDFs |
-| GET | `/api/scan/status` | Last scan result |
-| GET | `/api/papers` | List papers (pagination + filter) |
-| GET | `/api/papers/{id}` | Paper detail + extraction JSON |
-| POST | `/api/papers/{id}/reprocess` | Re-run LLM extraction |
-
----
-
-## Supported LLM Providers
-
-| Provider | Models | Config |
-|----------|--------|--------|
-| Anthropic (default) | `claude-sonnet-4-5`, `claude-3-5-haiku-20241022` | `LLM_PROVIDER=anthropic` |
-| OpenAI | `gpt-4o`, `gpt-4o-mini` | `LLM_PROVIDER=openai` |
-
-Switch by editing `backend/.env` — no code changes required.
-
----
-
-## What Gets Extracted
-
-For each PDF, PaperLens extracts:
-
-- **Bibliographic**: title, authors, journal, year, DOI, impact factor
-- **Material**: composition, structure, deposition conditions
-- **Experimental results**: Tc, Hc2, resistivity, etc.  
-- **Evidence**: page numbers, quoted text, confidence scores
-- **Custom parameters**: add your own in Settings → Custom Extraction Parameters
-
-Results are saved as:
-- `data/extractions/<hash>.json` — full structured JSON
-- `data/summaries/<hash>.txt` — human-readable summary
-
----
-
-*PaperLens v2 · Windows-first · No cloud infrastructure required*
+*PaperLens v2 — Windows-first local research tool — no cloud infrastructure*

@@ -59,9 +59,11 @@ export const settingsApi = {
 
 // ── Scan ──────────────────────────────────────────────────────────────────────
 export const scanApi = {
-  run:    (custom_parameters?: object[]) =>
-            api.post('/scan', { custom_parameters }).then(r => r.data),
-  status: ()                             => api.get('/scan/status').then(r => r.data),
+  run:             (custom_parameters?: object[]) =>
+                     api.post('/scan', { custom_parameters }).then(r => r.data),
+  reprocessFailed: () =>
+                     api.post('/scan/reprocess-failed').then(r => r.data),
+  status:          () => api.get('/scan/status').then(r => r.data),
 };
 
 // ── Papers ────────────────────────────────────────────────────────────────────
