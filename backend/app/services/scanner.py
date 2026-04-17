@@ -3,19 +3,15 @@ Folder scanner — the core ingestion engine.
 
 Workflow for each PDF found:
   1. Compute SHA-256
-  2. Check if already in DB with status=done -> skip
-  3. If status=failed (prior attempt) -> allow reprocessing
+  2. Look up by BOTH sha256 AND file_path to find any existing record
+  3. Skip if already done
   4. Extract text
   5. Call LLM for structured extraction
   6. Write summary .txt and extraction .json to data/
   7. Save Paper record to SQLite
 
-Data safety guarantees:
-  - Already-processed (done) papers are NEVER re-touched by a normal scan.
-  - SHA-256 deduplication means the same PDF content is only processed once.
-  - If processing fails the Paper record is kept with status=failed and
-    the original SHA-256, so a future reprocess attempt can find it.
-  - Output files (summaries/, extractions/) are only written on success.
+Each PDF is processed in its own try/except + rollback so one failure
+never poisons the DB session for the rest of the scan.
 """
 from __future__ import annotations
 
@@ -28,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -57,6 +54,29 @@ def sha256_of_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _find_existing(db: Session, sha: str, file_path: str) -> Optional[Paper]:
+    """
+    Find an existing Paper record by sha256 OR file_path.
+
+    We check both because:
+    - sha256 match: same content, possibly moved/renamed
+    - file_path match: same location, content may have changed (re-downloaded PDF)
+
+    Returns the most relevant existing record, or None.
+    """
+    # Primary: sha256 match (same content)
+    by_sha = db.query(Paper).filter(Paper.sha256 == sha).first()
+    if by_sha:
+        return by_sha
+
+    # Secondary: file_path match (same location, content changed)
+    by_path = db.query(Paper).filter(Paper.file_path == file_path).first()
+    if by_path:
+        return by_path
+
+    return None
+
+
 def run_scan(
     db: Session,
     custom_parameters: Optional[list[dict]] = None,
@@ -65,19 +85,14 @@ def run_scan(
     """
     Scan the configured folder for new PDFs and process them.
 
-    Args:
-        db: SQLAlchemy session
-        custom_parameters: override custom extraction params (uses DB value if None)
-        reprocess_failed: if True, also reprocess papers with status=failed
-
-    Returns a ScanResult summary.
-    Existing successfully processed papers (status=done) are always skipped.
+    - Already-done papers (status=done) are always skipped.
+    - Failed papers are skipped unless reprocess_failed=True.
+    - Each PDF is processed in isolation: one failure never stops the rest.
     """
     t0 = time.time()
     result = ScanResult()
     custom_parameters = custom_parameters or []
 
-    # ── Get configured folder ─────────────────────────────────────────────────
     folder_str = get_setting(db, "paper_folder")
     if not folder_str:
         raise ValueError(
@@ -94,7 +109,7 @@ def run_scan(
 
     log.info(f"Scanning folder: {folder}")
 
-    # ── Find PDFs ─────────────────────────────────────────────────────────────
+    # Find all PDFs (case-insensitive, deduplicated by resolved path)
     pdf_files: list[Path] = []
     seen: set[Path] = set()
     for pattern in ("*.pdf", "*.PDF"):
@@ -111,12 +126,19 @@ def run_scan(
     settings = get_settings()
 
     for pdf_path in pdf_files:
+        # Each PDF gets a fresh, isolated try/except.
+        # On any error we rollback THIS paper only, then continue.
         try:
             _process_one(
                 db, pdf_path, settings, custom_parameters, result,
                 reprocess_failed=reprocess_failed,
             )
         except Exception as e:
+            # Make sure the session is clean for the next iteration
+            try:
+                db.rollback()
+            except Exception:
+                pass
             log.error(
                 f"Unexpected error processing {pdf_path.name}: {e}",
                 exc_info=True,
@@ -141,11 +163,26 @@ def _process_one(
     result: ScanResult,
     reprocess_failed: bool = False,
 ) -> None:
-    """Process a single PDF file."""
+    """
+    Process a single PDF file.
 
-    # ── SHA-256 dedup ─────────────────────────────────────────────────────────
-    sha = sha256_of_file(pdf_path)
-    existing = db.query(Paper).filter(Paper.sha256 == sha).first()
+    This function must always leave the DB session in a clean (committed or
+    rolled-back) state when it returns, so the caller can continue with the
+    next file.
+    """
+    file_path_str = str(pdf_path)
+
+    # ── Compute SHA-256 ───────────────────────────────────────────────────────
+    try:
+        sha = sha256_of_file(pdf_path)
+    except OSError as e:
+        log.error(f"Cannot read {pdf_path.name}: {e}")
+        result.failed += 1
+        result.errors.append(f"{pdf_path.name}: Cannot read file — {e}")
+        return
+
+    # ── Look up existing record (by sha256 OR file_path) ─────────────────────
+    existing = _find_existing(db, sha, file_path_str)
 
     if existing:
         if existing.status == PaperStatus.done:
@@ -154,42 +191,66 @@ def _process_one(
             return
 
         if existing.status == PaperStatus.failed and not reprocess_failed:
+            err_preview = (existing.error_message or "")[:80]
             log.debug(
-                f"Skipping {pdf_path.name} (previously failed: {existing.error_message[:80]}). "
+                f"Skipping {pdf_path.name} (previously failed: {err_preview}). "
                 "Use 'Reprocess Failed' to retry."
             )
             result.skipped += 1
             return
 
-        if existing.status in (PaperStatus.failed, PaperStatus.processing):
-            # Allow reprocessing
-            log.info(
-                f"Reprocessing {pdf_path.name} "
-                f"(previous status={existing.status.value})"
-            )
-            paper = existing
-            paper.status = PaperStatus.processing
-            paper.error_message = None
+        # Reuse existing record, reset it for reprocessing
+        log.info(
+            f"Reprocessing {pdf_path.name} "
+            f"(previous status={existing.status.value})"
+        )
+        paper = existing
+        # Update file_path in case the file moved
+        paper.file_path = file_path_str
+        paper.sha256 = sha
+        paper.status = PaperStatus.processing
+        paper.error_message = None
+        try:
             db.flush()
-        else:
-            # pending — process normally
-            paper = existing
+        except IntegrityError:
+            db.rollback()
+            log.warning(f"Integrity error updating {pdf_path.name} — skipping")
+            result.skipped += 1
+            return
+
     else:
-        # ── Create new pending record ──────────────────────────────────────────
+        # ── Create a new record ───────────────────────────────────────────────
         paper = Paper(
-            file_path=str(pdf_path),
+            file_path=file_path_str,
             file_name=pdf_path.name,
             file_size_bytes=pdf_path.stat().st_size,
             sha256=sha,
             status=PaperStatus.processing,
         )
         db.add(paper)
-        db.flush()
+        try:
+            db.flush()  # assigns paper.id, checks UNIQUE constraints
+        except IntegrityError as e:
+            db.rollback()
+            # Race condition or leftover record from a previous crash.
+            # Try to find the record that caused the conflict and skip.
+            log.warning(
+                f"Integrity error inserting {pdf_path.name} — "
+                f"record already exists. Skipping. ({e})"
+            )
+            result.skipped += 1
+            return
+
+    # ── At this point paper is in DB with status=processing ───────────────────
+    paper_id = paper.id
 
     try:
-        log.info(f"Processing: {pdf_path.name} ({pdf_path.stat().st_size / 1024:.0f} KB)")
+        log.info(
+            f"Processing: {pdf_path.name} "
+            f"({pdf_path.stat().st_size / 1024:.0f} KB)"
+        )
 
-        # ── Extract PDF text ──────────────────────────────────────────────────
+        # Extract PDF text
         text = extract_text(pdf_path)
         text_len = len(text.strip())
         if text_len < 50:
@@ -201,16 +262,15 @@ def _process_one(
 
         log.info(f"Extracted {len(text):,} chars from {pdf_path.name}")
 
-        # ── LLM extraction ────────────────────────────────────────────────────
+        # LLM extraction
         provider = get_llm_provider()
         extraction = provider.extract(text, custom_parameters)
 
-        # ── Write output files ────────────────────────────────────────────────
-        paper_id = paper.id
-        summary_path = _write_summary(settings, paper_id, pdf_path, extraction)
+        # Write output files
+        summary_path    = _write_summary(settings, paper_id, pdf_path, extraction)
         extraction_path = _write_extraction(settings, paper_id, extraction)
 
-        # ── Update DB record ──────────────────────────────────────────────────
+        # Update DB record
         paper.status          = PaperStatus.done
         paper.processed_at    = datetime.utcnow()
         paper.title           = extraction.title
@@ -230,37 +290,57 @@ def _process_one(
         log.info(f"Done: {pdf_path.name} -> {extraction.title or '(no title)'}")
 
     except Exception as e:
-        db.rollback()
-        error_msg = str(e)
+        # Roll back this paper's changes
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+        error_msg = _format_error_message(e)
         log.error(f"Failed: {pdf_path.name}: {error_msg}")
 
-        # Re-attach and mark as failed with detailed error
-        paper = db.merge(paper)
-        paper.status        = PaperStatus.failed
-        paper.error_message = _format_error_message(e)
-        paper.processed_at  = datetime.utcnow()
-        db.commit()
+        # Re-fetch the paper record (session was rolled back) and mark failed
+        try:
+            paper_record = db.get(Paper, paper_id)
+            if paper_record is None:
+                # Record was rolled back too (e.g. it was new and flush failed)
+                # Re-insert a minimal failed record so it shows in the UI
+                paper_record = Paper(
+                    file_path=file_path_str,
+                    file_name=pdf_path.name,
+                    file_size_bytes=pdf_path.stat().st_size if pdf_path.exists() else 0,
+                    sha256=sha,
+                    status=PaperStatus.failed,
+                    error_message=error_msg,
+                    processed_at=datetime.utcnow(),
+                )
+                db.add(paper_record)
+            else:
+                paper_record.status        = PaperStatus.failed
+                paper_record.error_message = error_msg
+                paper_record.processed_at  = datetime.utcnow()
+            db.commit()
+        except Exception as db_err:
+            log.error(
+                f"Could not save failed status for {pdf_path.name}: {db_err}"
+            )
+            try:
+                db.rollback()
+            except Exception:
+                pass
 
         result.failed += 1
         result.errors.append(f"{pdf_path.name}: {error_msg}")
 
 
 def _format_error_message(exc: Exception) -> str:
-    """
-    Format an exception into a human-readable error message stored in the DB.
-    This is shown in the UI next to the paper's status badge.
-    """
     msg = str(exc)
-
-    # Truncate very long messages (e.g. full API error bodies)
     if len(msg) > 500:
         msg = msg[:497] + "..."
-
     return msg
 
 
 def _write_summary(settings, paper_id: str, pdf_path: Path, extraction) -> Path:
-    """Write human-readable summary .txt file."""
     stem = pdf_path.stem[:80]
     fname = f"{stem}_{paper_id[:8]}.txt"
     out_path = settings.SUMMARIES_DIR / fname
@@ -314,7 +394,6 @@ def _write_summary(settings, paper_id: str, pdf_path: Path, extraction) -> Path:
 
 
 def _write_extraction(settings, paper_id: str, extraction) -> Path:
-    """Write machine-readable extraction .json file."""
     fname = f"{paper_id}.json"
     out_path = settings.EXTRACTIONS_DIR / fname
     data = extraction.to_dict()
