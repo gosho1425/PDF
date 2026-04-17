@@ -1,9 +1,9 @@
-# ─── Secrets – NEVER commit ───────────────────────────────────────────────────
+# ── Secrets — NEVER commit ─────────────────────────────────────────────────────
 .env
 .env.local
 .env.*.local
 
-# ─── Python ───────────────────────────────────────────────────────────────────
+# ── Python ─────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -24,7 +24,7 @@ htmlcov/
 .tox/
 *.log
 
-# ─── Node / Next.js ───────────────────────────────────────────────────────────
+# ── Node / Next.js ─────────────────────────────────────────────────────────────
 node_modules/
 .next/
 out/
@@ -34,28 +34,38 @@ yarn-error.log*
 .pnp
 .pnp.js
 .DS_Store
-# Next.js generates these — do not commit
 next-env.d.ts
 tsconfig.tsbuildinfo
 *.tsbuildinfo
 
-# ─── Data / Generated ─────────────────────────────────────────────────────────
-data/papers/
-data/exports/
-*.pdf
-*.csv
+# ── User data (SQLite DB, summaries, extractions) ──────────────────────────────
+# These are YOUR data — gitignored because they are local and can be large.
+# Back them up with backup-data.bat.
+# DO NOT delete these files when updating the code.
+backend/data/app.db
+backend/data/app.db-shm
+backend/data/app.db-wal
+backend/data/summaries/
+backend/data/extractions/
 
-# ─── Database ─────────────────────────────────────────────────────────────────
+# ── Local backups ──────────────────────────────────────────────────────────────
+# Created by backup-data.bat — keep locally, not in git
+backups/
+
+# ── PDF files (large binary, not tracked in git) ───────────────────────────────
+*.pdf
+*.PDF
+
+# ── Database generic ───────────────────────────────────────────────────────────
 *.sqlite
-*.db
 *.db-shm
 *.db-wal
 *.dump
 
-# ─── Docker ───────────────────────────────────────────────────────────────────
+# ── Docker (legacy, not used in v2) ────────────────────────────────────────────
 .docker/
 
-# ─── IDE / OS ─────────────────────────────────────────────────────────────────
+# ── IDE / OS ────────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
@@ -63,17 +73,11 @@ data/exports/
 .DS_Store
 Thumbs.db
 
-# ─── Celery ───────────────────────────────────────────────────────────────────
+# ── Celery (legacy, not used in v2) ────────────────────────────────────────────
 celerybeat-schedule
 celerybeat.pid
 
-# ─── Alembic ──────────────────────────────────────────────────────────────────
-# Keep migration files but ignore generated artifacts
-# (nothing to ignore here)
-
-# ─── Test artifacts ───────────────────────────────────────────────────────────
+# ── Test artifacts ──────────────────────────────────────────────────────────────
 .pytest_cache/
 coverage.xml
-.coverage
-htmlcov/
 .github/

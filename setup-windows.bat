@@ -1,22 +1,31 @@
 @echo off
 chcp 65001 >nul 2>&1
 REM PaperLens - First-time Windows Setup
-REM Run this ONCE, then use start-backend.bat and start-frontend.bat
+REM Run this ONCE after cloning/downloading the project.
+REM After setup, use start-backend.bat and start-frontend.bat every time.
 
 title PaperLens Setup
+
 echo.
 echo ============================================================
 echo   PaperLens - First-time Windows Setup
 echo ============================================================
 echo.
 
-REM --- Check Python ---
+REM --- 1. Check Python ---
 echo [1/5] Checking Python...
 python --version >nul 2>&1
 if errorlevel 1 (
+    echo.
     echo [ERROR] Python not found.
-    echo Download Python 3.10+ from: https://www.python.org/downloads/
-    echo IMPORTANT: Check "Add Python to PATH" during installation!
+    echo.
+    echo Download Python 3.10 or newer from:
+    echo   https://www.python.org/downloads/
+    echo.
+    echo IMPORTANT: During install, check the box:
+    echo   "Add Python to PATH"
+    echo.
+    echo After installing Python, restart this script.
     pause
     exit /b 1
 )
@@ -24,12 +33,17 @@ python --version
 echo [OK] Python found.
 echo.
 
-REM --- Check Node.js ---
+REM --- 2. Check Node.js ---
 echo [2/5] Checking Node.js...
 node --version >nul 2>&1
 if errorlevel 1 (
+    echo.
     echo [ERROR] Node.js not found.
-    echo Download Node.js LTS from: https://nodejs.org/
+    echo.
+    echo Download Node.js LTS from:
+    echo   https://nodejs.org/
+    echo.
+    echo After installing Node.js, restart this script.
     pause
     exit /b 1
 )
@@ -37,7 +51,7 @@ node --version
 echo [OK] Node.js found.
 echo.
 
-REM --- Backend setup ---
+REM --- 3. Create Python virtual environment ---
 echo [3/5] Setting up Python backend...
 cd /d "%~dp0backend"
 
@@ -45,69 +59,99 @@ if not exist ".venv\Scripts\activate.bat" (
     echo Creating virtual environment...
     python -m venv .venv
     if errorlevel 1 (
+        echo.
         echo [ERROR] Could not create virtual environment.
+        echo Try running: python -m venv .venv
         pause
         exit /b 1
     )
+    echo [OK] Virtual environment created.
 )
 
+echo Activating virtual environment...
 call .venv\Scripts\activate.bat
-echo Installing Python packages...
-pip install -r requirements.txt
 if errorlevel 1 (
-    echo [ERROR] pip install failed. Check your internet connection.
+    echo [ERROR] Failed to activate virtual environment.
     pause
     exit /b 1
 )
 
+echo Installing Python packages (this may take 1-2 minutes)...
+pip install -r requirements.txt
+if errorlevel 1 (
+    echo.
+    echo [ERROR] pip install failed.
+    echo Check your internet connection and try again.
+    pause
+    exit /b 1
+)
+echo [OK] Python packages installed.
+
+REM --- 4. Create .env if missing ---
 if not exist ".env" (
-    copy .env.example .env
+    echo.
+    echo Creating .env from template...
+    copy .env.example .env >nul
     echo.
     echo ============================================================
-    echo   ACTION REQUIRED: Add your API key to backend\.env
+    echo   ACTION REQUIRED - Add your Anthropic API key
     echo.
-    echo   Edit this line:
-    echo   ANTHROPIC_API_KEY=sk-ant-your-key-here
+    echo   The file  backend\.env  will now open in Notepad.
     echo.
-    echo   Get a key at: https://console.anthropic.com/
+    echo   Find this line:
+    echo     ANTHROPIC_API_KEY=sk-ant-your-key-here
+    echo.
+    echo   Replace it with your real key from:
+    echo     https://console.anthropic.com/
+    echo.
+    echo   Save the file and close Notepad to continue setup.
     echo ============================================================
     echo.
-    echo Opening .env in Notepad... Save and close Notepad when done.
+    echo Press any key to open .env in Notepad...
+    pause >nul
     notepad .env
     echo.
-    echo After saving .env, press any key to continue...
-    pause >nul
+    echo [OK] .env configured.
+) else (
+    echo [OK] .env already exists.
 )
-echo [OK] Backend ready.
 echo.
 
-REM --- Frontend setup ---
+REM --- 5. Install frontend dependencies ---
 echo [4/5] Installing frontend dependencies...
 cd /d "%~dp0frontend"
-if not exist "node_modules" (
-    npm install
+
+if not exist "node_modules\" (
+    echo Running npm install (this may take 1-2 minutes)...
+    call npm install
     if errorlevel 1 (
+        echo.
         echo [ERROR] npm install failed.
+        echo Check your internet connection and try again.
         pause
         exit /b 1
     )
+    echo [OK] Frontend dependencies installed.
 ) else (
-    echo [OK] node_modules already exists, skipping npm install.
+    echo [OK] node_modules already exists, skipping.
 )
-echo [OK] Frontend ready.
 echo.
 
 REM --- Done ---
 echo [5/5] Setup complete!
 echo.
 echo ============================================================
-echo   HOW TO START PAPERLENS:
+echo   SETUP COMPLETE - How to start PaperLens:
 echo.
-echo   Window 1: double-click  start-backend.bat   (keep open)
-echo   Window 2: double-click  start-frontend.bat  (keep open)
-echo   Browser:  http://localhost:3000
+echo   Step 1: Double-click  start-backend.bat   (keep window open)
+echo   Step 2: Double-click  start-frontend.bat  (in a NEW window)
+echo   Step 3: Open browser: http://localhost:3000
 echo.
-echo   Then go to Settings and enter your folder: E:\Papers
+echo   In the app:
+echo     - Go to Settings
+echo     - Enter your PDF folder path (e.g. E:\Papers)
+echo     - Click Validate Path, then Save Settings
+echo     - Go to Scan and click Scan Now
 echo ============================================================
 echo.
 cd /d "%~dp0"
