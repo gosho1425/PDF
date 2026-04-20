@@ -21,6 +21,15 @@ pymupdf==1.24.14            # fallback extractor (fitz)
 anthropic==0.40.0           # Claude — default
 openai==1.57.2              # GPT-4o — optional
 
+# ── Bayesian Optimisation (Phase 2) ───────────────────────────────────────────
+# scikit-learn: Gaussian Process surrogate model (GP+EI)
+# numpy: numerical operations for the BO engine
+# scipy: erf function used in Expected Improvement calculation
+# Pure Python, no C++ build required — works on Windows with pip.
+scikit-learn==1.5.2
+numpy==1.26.4
+scipy==1.13.1
+
 # ── Utilities ─────────────────────────────────────────────────────────────────
 python-multipart==0.0.20    # for potential file uploads
 python-dotenv==1.0.1        # .env loading (pydantic-settings uses this)

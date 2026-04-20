@@ -1,13 +1,14 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { BookOpen, ScanLine, Settings, FlaskConical } from 'lucide-react';
+import { BookOpen, ScanLine, Settings, FlaskConical, TrendingUp } from 'lucide-react';
 
 const links = [
-  { href: '/',         label: 'Dashboard',  icon: FlaskConical },
-  { href: '/scan',     label: 'Scan',       icon: ScanLine },
-  { href: '/papers',   label: 'Papers',     icon: BookOpen },
-  { href: '/settings', label: 'Settings',   icon: Settings },
+  { href: '/',             label: 'Dashboard',    icon: FlaskConical },
+  { href: '/scan',         label: 'Scan',         icon: ScanLine },
+  { href: '/papers',       label: 'Papers',       icon: BookOpen },
+  { href: '/optimization', label: 'Optimization', icon: TrendingUp },
+  { href: '/settings',     label: 'Settings',     icon: Settings },
 ];
 
 export function Nav() {

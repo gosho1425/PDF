@@ -76,7 +76,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Installing Python packages (this may take 1-2 minutes)...
+echo Installing Python packages (this may take 2-4 minutes)...
+echo Note: Phase 2 includes scikit-learn and numpy for Bayesian optimization.
 pip install -r requirements.txt
 if errorlevel 1 (
     echo.
@@ -117,6 +118,15 @@ if not exist ".env" (
 )
 echo.
 
+REM --- 4b. Run Phase 2 migration (safe to run multiple times) ---
+echo Running Phase 2 database migration (creates new optimization tables)...
+python migrate_phase2.py
+if errorlevel 1 (
+    echo [WARN] Migration script reported an error - check above output.
+    echo This is usually non-fatal. Continuing...
+)
+echo.
+
 REM --- 5. Install frontend dependencies ---
 echo [4/5] Installing frontend dependencies...
 cd /d "%~dp0frontend"
@@ -148,10 +158,10 @@ echo   Step 2: Double-click  start-frontend.bat  (in a NEW window)
 echo   Step 3: Open browser: http://localhost:3000
 echo.
 echo   In the app:
-echo     - Go to Settings
-echo     - Enter your PDF folder path (e.g. E:\Papers)
-echo     - Click Validate Path, then Save Settings
-echo     - Go to Scan and click Scan Now
+echo     - Go to Settings and set your PDF folder
+echo     - Go to Scan and click Scan Now to extract literature
+echo     - Go to Optimization (new!) to start BO campaigns
+echo       Phase 2: Create project, seed variables, click Recommend
 echo ============================================================
 echo.
 cd /d "%~dp0"

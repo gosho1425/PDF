@@ -66,6 +66,64 @@ export const scanApi = {
   status:          () => api.get('/scan/status').then(r => r.data),
 };
 
+// ── Optimization (Phase 2) ────────────────────────────────────────────────────
+export const optimizationApi = {
+  // Projects
+  listProjects: () =>
+    api.get('/optimization/projects').then(r => r.data),
+  createProject: (data: {
+    name: string; description?: string; material_system?: string;
+    objective_variable?: string; objective_direction?: string;
+    constraints_note?: string;
+  }) => api.post('/optimization/projects', data).then(r => r.data),
+  getProject: (id: string) =>
+    api.get(`/optimization/projects/${id}`).then(r => r.data),
+  updateProject: (id: string, data: object) =>
+    api.put(`/optimization/projects/${id}`, data).then(r => r.data),
+  deleteProject: (id: string) =>
+    api.delete(`/optimization/projects/${id}`),
+  getDataset: (id: string) =>
+    api.get(`/optimization/projects/${id}/dataset`).then(r => r.data),
+  getLiteraturePreview: (id: string) =>
+    api.get(`/optimization/projects/${id}/literature-preview`).then(r => r.data),
+
+  // Variables
+  listVariables: (projectId: string) =>
+    api.get(`/optimization/projects/${projectId}/variables`).then(r => r.data),
+  createVariable: (projectId: string, data: object) =>
+    api.post(`/optimization/projects/${projectId}/variables`, data).then(r => r.data),
+  updateVariable: (id: string, data: object) =>
+    api.put(`/optimization/variables/${id}`, data).then(r => r.data),
+  deleteVariable: (id: string) =>
+    api.delete(`/optimization/variables/${id}`),
+  seedVariables: (projectId: string) =>
+    api.post(`/optimization/projects/${projectId}/seed-variables`).then(r => r.data),
+
+  // User experiments
+  listExperiments: (projectId: string) =>
+    api.get(`/optimization/projects/${projectId}/experiments`).then(r => r.data),
+  createExperiment: (projectId: string, data: object) =>
+    api.post(`/optimization/projects/${projectId}/experiments`, data).then(r => r.data),
+  getExperiment: (id: string) =>
+    api.get(`/optimization/experiments/${id}`).then(r => r.data),
+  updateExperiment: (id: string, data: object) =>
+    api.put(`/optimization/experiments/${id}`, data).then(r => r.data),
+  deleteExperiment: (id: string) =>
+    api.delete(`/optimization/experiments/${id}`),
+
+  // Recommendations
+  recommend: (projectId: string, n_candidates = 5) =>
+    api.post(`/optimization/projects/${projectId}/recommend`,
+             { n_candidates }).then(r => r.data),
+  listRuns: (projectId: string) =>
+    api.get(`/optimization/projects/${projectId}/runs`).then(r => r.data),
+  getRun: (id: string) =>
+    api.get(`/optimization/runs/${id}`).then(r => r.data),
+  markExecuted: (candidateId: string, experimentId?: string) =>
+    api.post(`/optimization/candidates/${candidateId}/execute`,
+             { experiment_id: experimentId }).then(r => r.data),
+};
+
 // ── Papers ────────────────────────────────────────────────────────────────────
 export const papersApi = {
   list: (params?: {

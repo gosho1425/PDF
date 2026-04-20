@@ -76,3 +76,112 @@ export interface LlmInfo {
   temperature: number;
   timeout_seconds: number;
 }
+
+// ── Phase 2: Optimization types ───────────────────────────────────────────────
+
+export type VariableRole = 'input' | 'output' | 'material';
+export type VariableType = 'continuous' | 'categorical' | 'integer' | 'boolean';
+export type ExperimentStatus = 'planned' | 'running' | 'completed' | 'failed';
+export type SourceType = 'literature' | 'user_experiment';
+export type RecommendationStatus = 'pending' | 'running' | 'completed' | 'failed';
+
+export interface OptimizationProject {
+  id: string;
+  name: string;
+  description: string | null;
+  material_system: string | null;
+  objective_variable: string | null;
+  objective_direction: 'maximize' | 'minimize' | null;
+  constraints_note: string | null;
+  n_literature_points: number;
+  n_user_experiments: number;
+  n_recommendations: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectVariable {
+  id: string;
+  project_id: string;
+  name: string;
+  label: string | null;
+  role: VariableRole;
+  var_type: VariableType;
+  unit: string | null;
+  description: string | null;
+  min_value: number | null;
+  max_value: number | null;
+  choices: string[] | null;
+  is_objective: boolean;
+  is_constraint: boolean;
+  created_at: string;
+}
+
+export interface UserExperiment {
+  id: string;
+  project_id: string;
+  name: string | null;
+  notes: string | null;
+  source_type: SourceType;
+  status: ExperimentStatus;
+  input_values: Record<string, { value: number | string; unit?: string }> | null;
+  output_values: Record<string, { value: number | string; unit?: string }> | null;
+  objective_value: number | null;
+  from_recommendation_id: string | null;
+  run_date: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecommendedCandidate {
+  id: string;
+  run_id: string;
+  rank: number;
+  proposed_inputs: Record<string, number | string> | null;
+  predicted_mean: number | null;
+  predicted_std: number | null;
+  acquisition_score: number | null;
+  explanation: string | null;
+  supporting_paper_ids: string[] | null;
+  was_executed: boolean;
+  executed_experiment_id: string | null;
+  created_at: string;
+}
+
+export interface RecommendationRun {
+  id: string;
+  project_id: string;
+  status: RecommendationStatus;
+  message: string | null;
+  n_literature_points: number;
+  n_user_points: number;
+  n_candidates: number;
+  model_type: string | null;
+  acquisition_fn: string | null;
+  created_at: string;
+  completed_at: string | null;
+  candidates?: RecommendedCandidate[];
+}
+
+export interface DatasetPreview {
+  n_total: number;
+  n_literature: number;
+  n_user: number;
+  stats: Record<string, {
+    n: number; min: number | null; max: number | null;
+    mean: number | null; std: number | null;
+  }>;
+  points: Record<string, unknown>[];
+}
+
+export interface LiteraturePreview {
+  n_papers: number;
+  papers: Array<{
+    paper_id: string;
+    paper_title: string;
+    paper_year: number | null;
+    source_type: SourceType;
+    variables_present: string[];
+    n_variables: number;
+  }>;
+}
