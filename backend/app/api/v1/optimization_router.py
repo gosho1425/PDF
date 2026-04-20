@@ -91,11 +91,14 @@ class VariableUpdate(BaseModel):
     var_type:     Optional[str] = None
     unit:         Optional[str] = None
     description:  Optional[str] = None
+    # Use a sentinel so we can distinguish "not provided" from "explicitly null"
     min_value:    Optional[float] = None
     max_value:    Optional[float] = None
     choices:      Optional[list[str]] = None
     is_objective: Optional[bool] = None
     is_constraint: Optional[bool] = None
+
+    model_config = {"populate_by_name": True}
 
 
 class ExperimentCreate(BaseModel):
@@ -376,11 +379,21 @@ def update_variable(variable_id: str, body: VariableUpdate,
     if not v:
         raise HTTPException(404, "Variable not found")
 
+    # model_fields_set contains all fields that were explicitly provided in the
+    # request body — this lets us distinguish "not sent" (skip) from "sent as
+    # null" (clear the value).
+    provided = body.model_fields_set
+
     if body.label is not None:        v.label = body.label
     if body.unit is not None:         v.unit = body.unit
     if body.description is not None:  v.description = body.description
-    if body.min_value is not None:    v.min_value = body.min_value
-    if body.max_value is not None:    v.max_value = body.max_value
+
+    # min_value / max_value: update if the field was sent (even if null → clear)
+    if "min_value" in provided:
+        v.min_value = body.min_value   # may be None → clears the value
+    if "max_value" in provided:
+        v.max_value = body.max_value   # may be None → clears the value
+
     if body.choices is not None:      v.choices = body.choices
     if body.is_constraint is not None: v.is_constraint = body.is_constraint
     if body.role is not None:
