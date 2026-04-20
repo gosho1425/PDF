@@ -55,7 +55,7 @@ def get_session_factory():
 
 def init_db() -> None:
     """Create all tables. Safe to call on every startup."""
-    from app.models import paper, app_settings  # noqa: F401 — register models
+    from app.models import paper, app_settings, optimization  # noqa: F401 — register models
     Base.metadata.create_all(bind=get_engine())
 
 

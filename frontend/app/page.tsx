@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { papersApi, settingsApi, scanApi } from '@/lib/api';
 import type { AppSettings, ScanResult } from '@/types';
-import { BookOpen, ScanLine, Settings, FolderOpen, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
+import { BookOpen, ScanLine, Settings, FolderOpen, CheckCircle, AlertTriangle, Clock, TrendingUp } from 'lucide-react';
 
 export default function DashboardPage() {
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
@@ -112,7 +112,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Quick actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <ActionCard
           href="/scan"
           icon={<ScanLine className="w-5 h-5" />}
@@ -126,6 +126,13 @@ export default function DashboardPage() {
           title="Browse Papers"
           desc="Review extractions, summaries, and raw data"
           color="green"
+        />
+        <ActionCard
+          href="/optimization"
+          icon={<TrendingUp className="w-5 h-5" />}
+          title="Optimization"
+          desc="Bayesian experiment recommendation from literature"
+          color="indigo"
         />
         <ActionCard
           href="/settings"
@@ -174,12 +181,13 @@ function StatCard({ icon, label, value, sub, bg }: {
 
 function ActionCard({ href, icon, title, desc, color }: {
   href: string; icon: React.ReactNode; title: string; desc: string;
-  color: 'blue' | 'green' | 'purple';
+  color: 'blue' | 'green' | 'purple' | 'indigo';
 }) {
   const colors = {
-    blue: 'hover:border-blue-400 hover:bg-blue-50 [&_span]:text-blue-600',
-    green: 'hover:border-green-400 hover:bg-green-50 [&_span]:text-green-600',
+    blue:   'hover:border-blue-400 hover:bg-blue-50 [&_span]:text-blue-600',
+    green:  'hover:border-green-400 hover:bg-green-50 [&_span]:text-green-600',
     purple: 'hover:border-purple-400 hover:bg-purple-50 [&_span]:text-purple-600',
+    indigo: 'hover:border-indigo-400 hover:bg-indigo-50 [&_span]:text-indigo-600',
   };
   return (
     <Link href={href} className={`card p-5 flex items-start gap-3 transition-colors cursor-pointer ${colors[color]}`}>
