@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -29,6 +30,88 @@ from app.models.optimization import (
 from app.models.paper import Paper, PaperStatus
 
 log = logging.getLogger(__name__)
+
+
+# ── Material synonym / expansion table ───────────────────────────────────────
+# Each entry: canonical_key → set of all equivalent names (all lower-case).
+# When a user types "Nb" we also accept "niobium" in the paper text, but NOT
+# "NbN", "Nb3Al", "NbTa" etc. — those are *different compounds*.
+#
+# Rule: an element/formula matches a paper only when at least ONE token in
+# {canonical + synonyms} appears as a **whole word** (word-boundary) in the
+# paper's material field, title, OR abstract.
+#
+# "Whole word" here means the token is not immediately preceded/followed by
+# another alphanumeric character (handles "Nb" ≠ "NbN", "NbTa").
+
+MATERIAL_SYNONYMS: dict[str, set[str]] = {
+    # Pure elements
+    "nb":      {"nb", "niobium"},
+    "niobium": {"nb", "niobium"},
+    "pb":      {"pb", "lead"},
+    "sn":      {"sn", "tin"},
+    "al":      {"al", "aluminium", "aluminum"},
+    "v":       {"v", "vanadium"},
+    "ti":      {"ti", "titanium"},
+    "ta":      {"ta", "tantalum"},
+    "mo":      {"mo", "molybdenum"},
+    "re":      {"re", "rhenium"},
+    "in":      {"in", "indium"},
+    "hg":      {"hg", "mercury"},
+    # Common superconductor compounds / families
+    "nbn":     {"nbn", "niobium nitride", "nb nitride"},
+    "nbti":    {"nbti", "nb-ti", "niobium titanium"},
+    "nb3sn":   {"nb3sn", "nb₃sn", "niobium tin"},
+    "nb3al":   {"nb3al", "nb₃al", "niobium aluminum", "niobium aluminium"},
+    "nb3ge":   {"nb3ge", "nb₃ge"},
+    "nbse2":   {"nbse2", "nbse₂"},
+    "ybco":    {"ybco", "yba2cu3o7", "yba₂cu₃o₇", "y-ba-cu-o", "y123"},
+    "bscco":   {"bscco", "bi2sr2ca", "bismuth strontium calcium copper oxide"},
+    "tl2ba2cacuo":  {"tl2ba2cacu2o8", "tl-2212"},
+    "hgba2cacu":    {"hgba2ca", "hg-1212", "hg-1223"},
+    "mgb2":    {"mgb2", "mgb₂", "magnesium diboride", "magnesium boride"},
+    "fese":    {"fese", "iron selenide"},
+    "feas":    {"feas", "iron arsenide", "iron-based superconductor",
+                "iron-based sc", "pnictide"},
+    "bafe2as2": {"bafe2as2", "ba122", "bfe2as2"},
+    "lafeaso":  {"lafeaso", "la1111", "iron oxypnictide"},
+    "mon":     {"mon", "monx", "molybdenum nitride"},
+    "tin":     {"tin", "titanium nitride"},
+    "tan":     {"tan", "tantalum nitride"},
+    "pb-in":   {"pb-in", "pbln", "lead indium"},
+}
+
+
+def _build_query_tokens(system: str) -> set[str]:
+    """
+    Given a user-typed material system string (e.g. "Nb", "NbN", "YBCO"),
+    return a set of lower-case tokens that should be matched as whole words.
+    Includes synonyms from MATERIAL_SYNONYMS.
+    """
+    key = system.strip().lower()
+    # Direct lookup
+    synonyms = MATERIAL_SYNONYMS.get(key, {key})
+    # Also try without spaces / hyphens for compound names
+    synonyms = synonyms | {key}
+    return synonyms
+
+
+def _whole_word_match(tokens: set[str], text: str) -> bool:
+    """
+    Return True if ANY token in `tokens` appears as a whole word in `text`.
+    A "whole word" boundary: not preceded/followed by alphanumeric or
+    subscript-like characters.  We use regex word boundaries (\b) but also
+    handle digits attached (e.g. Nb3Al → "nb3al" is a single token, not "nb").
+    """
+    text_l = text.lower()
+    for tok in tokens:
+        if not tok:
+            continue
+        # Escape the token for regex safety (handles "nb₃sn", "bi2sr2ca" etc.)
+        pattern = r'(?<![a-z0-9_])' + re.escape(tok) + r'(?![a-z0-9_])'
+        if re.search(pattern, text_l):
+            return True
+    return False
 
 # Minimum confidence to include a literature data point
 MIN_CONFIDENCE = 0.5
@@ -129,23 +212,34 @@ def collect_literature_points(
         if not isinstance(ext, dict):
             continue
 
-        # Filter by material system if configured
+        # ── Material system filter ────────────────────────────────────────────
+        # Use whole-word matching + synonym expansion so that "Nb" matches
+        # "niobium" but NOT "NbN", "Nb3Al", "TiVNbTa" etc.
         if project.material_system:
-            mat_info = ext.get("material_info", {}) or {}
+            query_tokens = _build_query_tokens(project.material_system)
+
+            # Priority 1: material_info.material field from extraction JSON
+            mat_info  = ext.get("material_info", {}) or {}
             mat_field = mat_info.get("material", {})
-            mat_val = ""
             if isinstance(mat_field, dict):
-                mat_val = str(mat_field.get("value") or "").lower()
+                mat_val = str(mat_field.get("value") or "")
             elif mat_field:
-                mat_val = str(mat_field).lower()
-            system = project.material_system.lower()
-            # Simple substring match — could be improved with synonym list
-            if system and system not in mat_val and mat_val not in system:
-                # Also check title and abstract
-                title_text = (paper.title or "").lower()
-                abstract_text = (paper.abstract or "").lower()
-                if system not in title_text and system not in abstract_text:
-                    continue
+                mat_val = str(mat_field)
+            else:
+                mat_val = ""
+
+            # Priority 2: paper title
+            title_text = paper.title or ""
+            # Priority 3: abstract (less reliable — only if title has no match)
+            abstract_text = paper.abstract or ""
+
+            matched = (
+                _whole_word_match(query_tokens, mat_val)
+                or _whole_word_match(query_tokens, title_text)
+                or _whole_word_match(query_tokens, abstract_text)
+            )
+            if not matched:
+                continue
 
         row: dict = {
             "source_type":  SourceType.literature.value,
